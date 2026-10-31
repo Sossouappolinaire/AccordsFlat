@@ -1,5 +1,6 @@
 package com.accords.app;
 
+import java.util.function.IntConsumer;
 import android.content.Context;
 import android.media.MediaCodec;
 import android.media.MediaExtractor;
@@ -30,6 +31,10 @@ public class AudioDecoder {
     }
 
     public static Result decodeMono(Context ctx, Uri uri) throws Exception {
+        return decodeMono(ctx, uri, null);
+    }
+
+    public static Result decodeMono(Context ctx, Uri uri, IntConsumer prog) throws Exception {
         MediaExtractor ex = new MediaExtractor();
         ex.setDataSource(ctx, uri, null);
         int track = -1;
@@ -49,6 +54,8 @@ public class AudioDecoder {
         int rate = fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE);
         int ch = Math.max(1, fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT));
         FloatList list = new FloatList();
+        long durUs = fmt.containsKey(MediaFormat.KEY_DURATION) ? fmt.getLong(MediaFormat.KEY_DURATION) : 0;
+        int lastPct = -1;
         MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
         boolean inDone = false, outDone = false;
 
@@ -62,7 +69,12 @@ public class AudioDecoder {
                         codec.queueInputBuffer(ii, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
                         inDone = true;
                     } else {
-                        codec.queueInputBuffer(ii, 0, sz, ex.getSampleTime(), 0);
+                        long st = ex.getSampleTime();
+                        codec.queueInputBuffer(ii, 0, sz, st, 0);
+                        if (prog != null && durUs > 0) {
+                            int pct = (int) Math.min(99, 100 * st / durUs);
+                            if (pct != lastPct) { lastPct = pct; prog.accept(pct); }
+                        }
                         ex.advance();
                     }
                 }
@@ -91,6 +103,7 @@ public class AudioDecoder {
         codec.release();
         ex.release();
 
+        if (prog != null) prog.accept(100);
         Result r = new Result();
         r.samples = list.toArray();
         r.sampleRate = rate;

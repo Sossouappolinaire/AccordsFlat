@@ -2,6 +2,24 @@ plugins {
     id 'com.android.application' version '8.5.0'
 }
 
+// Les ressources Android (icône, thème, couleurs) doivent être rangées dans des
+// sous-dossiers (drawable, values, mipmap...). Pour garder tous les fichiers à la
+// racine du dépôt, ce dossier est fabriqué automatiquement au moment de la compilation.
+def rootRes = layout.buildDirectory.dir('generated/rootres').get().asFile
+def rootDir = projectDir
+
+// Copie faite dès la configuration : le dossier existe donc avant toute tâche Android.
+delete(rootRes)
+copy {
+    into rootRes
+    from(rootDir) { include 'ic_launcher_bg.xml', 'ic_launcher_fg.xml'; into 'drawable' }
+    from(rootDir) { include 'colors.xml', 'themes.xml'; into 'values' }
+    from(rootDir) { include 'ic_launcher_adaptive.xml'; rename { 'ic_launcher.xml' }; into 'mipmap-anydpi-v26' }
+    from(rootDir) { include 'ic_launcher_adaptive.xml'; rename { 'ic_launcher_round.xml' }; into 'mipmap-anydpi-v26' }
+    from(rootDir) { include 'ic_launcher_legacy.xml'; rename { 'ic_launcher.xml' }; into 'mipmap-anydpi' }
+    from(rootDir) { include 'ic_launcher_legacy.xml'; rename { 'ic_launcher_round.xml' }; into 'mipmap-anydpi' }
+}
+
 android {
     namespace 'com.accords.app'
     compileSdk 34
@@ -25,6 +43,7 @@ android {
     sourceSets {
         main {
             manifest.srcFile 'AndroidManifest.xml'
+            res.srcDirs = [rootRes]
             java.srcDirs = ['.']
             java.filter.include '*.java'
             // sécurité : ne jamais lire les dossiers générés

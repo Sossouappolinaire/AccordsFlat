@@ -1,5 +1,6 @@
 package com.accords.app;
 
+import java.util.function.IntConsumer;
 import java.util.*;
 
 /** Analyse harmonique : notes dominantes, tonalité, tempo, accords et grille. Java pur. */
@@ -8,6 +9,16 @@ public class ChordAnalyzer {
     public static final int SR = 22050;
     static final String[] EN = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
     static final String[] FR = {"Do", "Do#", "Ré", "Ré#", "Mi", "Fa", "Fa#", "Sol", "Sol#", "La", "La#", "Si"};
+    static final String[] FRB = {"Do", "Réb", "Ré", "Mib", "Mi", "Fa", "Solb", "Sol", "Lab", "La", "Sib", "Si"};
+
+    /** Réglages d'affichage / d'analyse (modifiés depuis l'écran Réglages). */
+    public static boolean flats = false;          // bémols au lieu de dièses
+    public static boolean allowSevenths = false;  // accords de 7ème (moins fiables)
+
+    public static String noteName(int pc) {
+        int i = ((pc % 12) + 12) % 12;
+        return flats ? FRB[i] : FR[i];
+    }
 
     static final int[][] TPL = {{0, 4, 7}, {0, 3, 7}, {0, 4, 7, 10}, {0, 3, 7, 10}, {0, 4, 7, 11}};
     static final String[] SUF = {"", "m", "7", "m7", "maj7"};
@@ -34,12 +45,36 @@ public class ChordAnalyzer {
 
     // ---------- Outils de transposition et d'affichage ----------
 
+    /** Transpose un accord (nom interne anglais) et l'écrit en notation française. */
     public static String transposeChord(String c, int semi) {
         if (c == null || c.isEmpty() || c.equals("N.C.")) return c;
         int len = (c.length() > 1 && c.charAt(1) == '#') ? 2 : 1;
         int idx = Arrays.asList(EN).indexOf(c.substring(0, len));
         if (idx < 0) return c;
-        return EN[((idx + semi) % 12 + 12) % 12] + c.substring(len);
+        return noteName(idx + semi) + c.substring(len);
+    }
+
+    /** Accord joué à l'instant sec (secondes), déjà transposé et en français. */
+    public static String chordAtTime(Analysis a, double sec, int semi) {
+        int i = (int) Math.floor((sec - a.t0) / a.half);
+        i = Math.max(0, Math.min(a.chords.length - 1, i));
+        return transposeChord(a.chords[i], semi);
+    }
+
+    /** Suite d'accords jouée entre deux instants, sans répétitions consécutives. */
+    public static String progression(Analysis a, double from, double to, int semi) {
+        int i0 = Math.max(0, (int) Math.floor((from - a.t0) / a.half));
+        int i1 = Math.min(a.chords.length - 1, (int) Math.floor((to - a.t0) / a.half));
+        StringBuilder sb = new StringBuilder();
+        String last = null;
+        for (int i = i0; i <= i1; i++) {
+            String c = a.chords[i];
+            if (c.equals("N.C.") || c.equals(last)) continue;
+            last = c;
+            if (sb.length() > 0) sb.append(" - ");
+            sb.append(transposeChord(c, semi));
+        }
+        return sb.length() == 0 ? "-" : sb.toString();
     }
 
     /** Index de la demi-mesure jouée à l'instant sec, ou -1. */
@@ -54,40 +89,48 @@ public class ChordAnalyzer {
         Grid gr = new Grid();
         gr.start = new int[nH];
         gr.end = new int[nH];
+        String[] c1 = new String[measures], c2 = new String[measures];
+        int maxW = 1;
+        for (int m = 0; m < measures; m++) {
+            c1[m] = transposeChord(a.chords[2 * m], semi);
+            c2[m] = transposeChord(a.chords[2 * m + 1], semi);
+            int w = c1[m].equals(c2[m]) ? c1[m].length() : c1[m].length() + 1 + c2[m].length();
+            maxW = Math.max(maxW, w);
+        }
+        int perLine = (maxW + 3) * 4 + 5 <= 50 ? 4 : 2;
         StringBuilder g = new StringBuilder();
         for (int m = 0; m < measures; m++) {
-            if (m % 4 == 0) g.append(String.format(Locale.US, "%3d ", m + 1));
+            if (m % perLine == 0) g.append(String.format(Locale.US, "%3d ", m + 1));
             g.append("| ");
-            String c1 = transposeChord(a.chords[2 * m], semi), c2 = transposeChord(a.chords[2 * m + 1], semi);
             int cell0 = g.length();
-            if (c1.equals(c2)) {
+            if (c1[m].equals(c2[m])) {
                 gr.start[2 * m] = gr.start[2 * m + 1] = cell0;
-                gr.end[2 * m] = gr.end[2 * m + 1] = cell0 + c1.length();
-                g.append(c1);
+                gr.end[2 * m] = gr.end[2 * m + 1] = cell0 + c1[m].length();
+                g.append(c1[m]);
             } else {
                 gr.start[2 * m] = cell0;
-                gr.end[2 * m] = cell0 + c1.length();
-                g.append(c1).append(' ');
+                gr.end[2 * m] = cell0 + c1[m].length();
+                g.append(c1[m]).append(' ');
                 gr.start[2 * m + 1] = g.length();
-                g.append(c2);
+                g.append(c2[m]);
                 gr.end[2 * m + 1] = g.length();
             }
-            while (g.length() - cell0 < 9) g.append(' ');
-            if (m % 4 == 3 || m == measures - 1) g.append("|\n");
+            while (g.length() - cell0 < maxW + 1) g.append(' ');
+            if (m % perLine == perLine - 1 || m == measures - 1) g.append("|\n");
         }
         gr.text = g.toString();
         return gr;
     }
 
     public static String summary(Analysis a, int semi) {
-        String key = FR[((a.keyRoot + semi) % 12 + 12) % 12] + (a.minor ? " mineur" : " majeur");
+        String key = noteName(a.keyRoot + semi) + (a.minor ? " mineur" : " majeur");
         Integer[] idx = new Integer[12];
         for (int i = 0; i < 12; i++) idx[i] = i;
         final double[] s = a.pcShare;
         Arrays.sort(idx, (p, q) -> Double.compare(s[q], s[p]));
         StringBuilder notes = new StringBuilder();
         for (int i = 0; i < 7; i++) {
-            notes.append(FR[((idx[i] + semi) % 12 + 12) % 12]).append(" (").append(Math.round(s[idx[i]])).append("%)");
+            notes.append(noteName(idx[i] + semi)).append(" (").append(Math.round(s[idx[i]])).append("%)");
             if (i < 6) notes.append(", ");
         }
         StringBuilder top = new StringBuilder();
@@ -148,7 +191,8 @@ public class ChordAnalyzer {
         double best = -1;
         String name = "N.C.";
         for (int root = 0; root < 12; root++) {
-            for (int t = 0; t < TPL.length; t++) {
+            int nT = allowSevenths ? TPL.length : 2;
+            for (int t = 0; t < nT; t++) {
                 double s = 0;
                 for (int iv : TPL[t]) s += c[(root + iv) % 12] / norm;
                 s = s / Math.sqrt(TPL[t].length) * W[t];
@@ -170,7 +214,7 @@ public class ChordAnalyzer {
         return sxy / (Math.sqrt(sxx * syy) + 1e-12);
     }
 
-    static double estimateBpm(float[] x) {
+    static double estimateBpm(float[] x, IntConsumer prog) {
         final int n = 1024, hop = 512;
         int m = (x.length - n) / hop + 1;
         if (m < 100) return 0;
@@ -179,6 +223,7 @@ public class ChordAnalyzer {
         double[] flux = new double[m];
         int kMax = 4000 * n / SR;
         for (int f = 0; f < m; f++) {
+            if (prog != null && f % 200 == 0) prog.accept(65 + 30 * f / m);
             for (int i = 0; i < n; i++) { re[i] = x[f * hop + i] * w[i]; im[i] = 0; }
             fft(re, im);
             double s = 0;
@@ -211,6 +256,10 @@ public class ChordAnalyzer {
 
     /** x : échantillons mono à 22 050 Hz. */
     public static Analysis analyze(float[] x) {
+        return analyze(x, null);
+    }
+
+    public static Analysis analyze(float[] x, IntConsumer prog) {
         final int N = 8192, HOP = 4096;
         int nf = x.length < N ? 0 : (x.length - N) / HOP + 1;
         if (nf < 8) throw new IllegalArgumentException("Morceau trop court pour l'analyse");
@@ -223,6 +272,7 @@ public class ChordAnalyzer {
         double maxRms = 0;
 
         for (int f = 0; f < nf; f++) {
+            if (prog != null && f % 10 == 0) prog.accept(65 * f / nf);
             double e = 0;
             for (int i = 0; i < N; i++) {
                 double v = x[f * HOP + i];
@@ -256,7 +306,7 @@ public class ChordAnalyzer {
             }
         }
 
-        A.bpm = estimateBpm(x);
+        A.bpm = estimateBpm(x, prog);
         if (A.bpm <= 0) A.bpm = 100;
 
         int first = 0;
@@ -296,6 +346,7 @@ public class ChordAnalyzer {
             if (top.size() == 8) break;
         }
         A.topChords = top.toArray(new String[0]);
+        if (prog != null) prog.accept(100);
         return A;
     }
 }
