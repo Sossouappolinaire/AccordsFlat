@@ -9,7 +9,6 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven { url 'https://jitpack.io' }   // encodeur MP3
     }
 }
 rootProject.name = "SossokouameAppel"

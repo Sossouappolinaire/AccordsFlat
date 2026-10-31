@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Séparateur de pistes : voix, batterie, basse, piano et autres instruments.
- * On écoute chaque piste puis on la télécharge en MP3.
+ * On écoute chaque piste puis on la télécharge en WAV.
  */
 public class StemActivity extends Activity {
 
@@ -72,7 +72,7 @@ public class StemActivity extends Activity {
 
         TextView sub = new TextView(this);
         sub.setText("Sépare un morceau en pistes : voix, batterie, basse, piano et autres instruments. "
-                + "Chaque piste s'écoute puis se télécharge en MP3. Tout est calculé sur le téléphone.");
+                + "Chaque piste s'écoute puis se télécharge en WAV. Tout est calculé sur le téléphone.");
         sub.setTextSize(13);
         sub.setTextColor(AccordsUi.MUTED);
         body.addView(sub, AccordsUi.lp(this, -1, -2, 6));
@@ -140,7 +140,7 @@ public class StemActivity extends Activity {
             play.setOnClickListener(v -> togglePlay(idx));
             playBtns[i] = play;
             row.addView(play);
-            Button dl = AccordsUi.chip(this, "⬇ MP3");
+            Button dl = AccordsUi.chip(this, "⬇ WAV");
             dl.setOnClickListener(v -> askSave(idx));
             LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(-2, -2);
             dlp.leftMargin = dp(8);
@@ -189,7 +189,7 @@ public class StemActivity extends Activity {
                 runOnUiThread(() -> {
                     stemFiles = files;
                     results.setVisibility(View.VISIBLE);
-                    status.setText("Terminé. Écoute chaque piste ou télécharge-la en MP3.");
+                    status.setText("Terminé. Écoute chaque piste ou télécharge-la en WAV.");
                 });
             } catch (CancellationException ce) {
                 runOnUiThread(() -> status.setText("Séparation annulée"));
@@ -239,7 +239,7 @@ public class StemActivity extends Activity {
         playingIdx = -1;
     }
 
-    // ------------------------------------------------------------------ Téléchargement MP3
+    // ------------------------------------------------------------------ Téléchargement WAV
 
     private void askSave(int i) {
         if (stemFiles == null) return;
@@ -249,8 +249,8 @@ public class StemActivity extends Activity {
         if (dot > 0) base = base.substring(0, dot);
         Intent in = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         in.addCategory(Intent.CATEGORY_OPENABLE);
-        in.setType("audio/mpeg");
-        in.putExtra(Intent.EXTRA_TITLE, base + "-" + StemSeparator.SLUGS[i] + ".mp3");
+        in.setType("audio/wav");
+        in.putExtra(Intent.EXTRA_TITLE, base + "-" + StemSeparator.SLUGS[i] + ".wav");
         startActivityForResult(in, SAVE);
     }
 
@@ -277,24 +277,17 @@ public class StemActivity extends Activity {
             final int idx = pendingSave;
             final Uri dest = data.getData();
             final File wav = stemFiles[idx];
-            Toast.makeText(this, "Conversion en MP3…", Toast.LENGTH_SHORT).show();
             new Thread(() -> {
-                File tmp = new File(getCacheDir(), "export-" + StemSeparator.SLUGS[idx] + ".mp3");
-                try {
-                    Mp3Encoder.wavToMp3(wav, tmp);
-                    try (InputStream in = new FileInputStream(tmp);
-                         OutputStream out = getContentResolver().openOutputStream(dest)) {
-                        byte[] buf = new byte[65536];
-                        int r;
-                        while ((r = in.read(buf)) > 0) out.write(buf, 0, r);
-                    }
-                    runOnUiThread(() -> Toast.makeText(this, "MP3 enregistré : " + StemSeparator.LABELS[idx],
+                try (InputStream in = new FileInputStream(wav);
+                     OutputStream out = getContentResolver().openOutputStream(dest)) {
+                    byte[] buf = new byte[65536];
+                    int r;
+                    while ((r = in.read(buf)) > 0) out.write(buf, 0, r);
+                    runOnUiThread(() -> Toast.makeText(this, "WAV enregistré : " + StemSeparator.LABELS[idx],
                             Toast.LENGTH_SHORT).show());
                 } catch (Throwable e) {
                     final String m = e.getMessage() == null ? e.toString() : e.getMessage();
                     runOnUiThread(() -> Toast.makeText(this, "Export impossible : " + m, Toast.LENGTH_LONG).show());
-                } finally {
-                    tmp.delete();
                 }
             }).start();
         }

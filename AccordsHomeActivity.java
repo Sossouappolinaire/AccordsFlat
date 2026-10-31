@@ -67,8 +67,8 @@ public class AccordsHomeActivity extends Activity {
         creer.setOnClickListener(v -> startActivity(new Intent(this, SongActivity.class)));
         root.addView(creer, AccordsUi.lp(this, -1, -2, 18));
 
-        // Bouton 3 : séparation des voix et des instruments (export MP3)
-        Button separer = AccordsUi.button(this, "✂  Séparateur de voix\nVoix · piano · batterie · basse → MP3", AccordsUi.ORANGE, AccordsUi.MAGENTA, Color.WHITE);
+        // Bouton 3 : séparation des voix et des instruments (export WAV)
+        Button separer = AccordsUi.button(this, "✂  Séparateur de voix\nVoix · piano · batterie · basse → WAV", AccordsUi.ORANGE, AccordsUi.MAGENTA, Color.WHITE);
         separer.setTextSize(17);
         separer.setPadding(dp(20), dp(28), dp(20), dp(28));
         separer.setOnClickListener(v -> startActivity(new Intent(this, StemActivity.class)));

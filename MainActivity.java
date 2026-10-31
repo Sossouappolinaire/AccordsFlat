@@ -112,7 +112,7 @@ public class MainActivity extends Activity {
         def(liste, "facebook", "📘", "Télécharger Facebook", "Une vidéo Facebook, en qualité standard ou HD", 0xFF1877F2, 0xFF5B3DF5, FacebookActivity.class);
         def(liste, "films", "🎞", "Films partagés", "Les films ajoutés par les utilisateurs", 0xFF0E5FCB, 0xFF12B5CB, FilmsFacebookActivity.class);
         def(liste, "telechargements", "📥", "Téléchargements", "Facebook, galerie et liens, classés à part", 0xFF2E9E73, 0xFF9BCB3C, HorsLigneActivity.class);
-        def(liste, "accords", "🎼", "Accords & Musique", "Analyser un morceau, créer une chanson, séparer les voix en MP3", 0xFF6D4AFF, 0xFFC13FD6, AccordsHomeActivity.class);
+        def(liste, "accords", "🎼", "Accords & Musique", "Analyser un morceau, créer une chanson, séparer les voix", 0xFF6D4AFF, 0xFFC13FD6, AccordsHomeActivity.class);
         def(liste, "compilateur", "🛠", "Compiler un projet", "Zip Android → APK à télécharger", 0xFF16A085, 0xFF2D8CFF, CompilateurActivity.class);
         def(liste, "analyse", "🛡", "Analyse du téléphone", "Fichiers malveillants et cachés", 0xFFC0392B, 0xFFE67E22, AnalyseActivity.class);
         def(liste, "sms", "💬", "Messages SMS", "Lire vos SMS reçus et envoyés", 0xFF2980B9, 0xFF8E44AD, SmsActivity.class);

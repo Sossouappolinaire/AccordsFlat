@@ -57,9 +57,8 @@ dependencies {
     implementation 'androidx.media3:media3-exoplayer-hls:1.4.1'
     implementation 'androidx.media3:media3-ui:1.4.1'
 
-    // Accords & Musique : paroles hors ligne (Vosk), séparation de pistes (ONNX) et MP3 (LAME)
+    // Accords & Musique : paroles hors ligne (Vosk), séparation de pistes (ONNX) 
     implementation 'net.java.dev.jna:jna:5.13.0@aar'
     implementation 'com.alphacephei:vosk-android:0.3.47@aar'
     implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.19.2'
-    implementation 'com.github.Jay-Goo:Mp3Converter:0.0.34'
 }

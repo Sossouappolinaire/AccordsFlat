@@ -3,7 +3,7 @@
 Après la connexion (écran de compte existant), l'accueil affiche une nouvelle tuile **🎼 Accords & Musique** :
 - **Analyser un morceau** : tonalité, tempo, accords, paroles, PDF (`AccordsAnalyseActivity`)
 - **Créer une chanson** : texte → musique, voix, chœur (`SongActivity`, `SongSynth`)
-- **Séparateur de voix** : voix, batterie, basse, piano + autres instruments, export MP3 (`StemActivity`)
+- **Séparateur de voix** : voix, batterie, basse, piano + autres instruments, export WAV (`StemActivity`)
 
 Les écrans d'Accords ne sont pas exportés : on n'y accède qu'une fois connecté.
 
