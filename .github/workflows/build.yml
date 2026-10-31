@@ -1,27 +1,40 @@
 name: Build APK
-on:
-  push:
-  workflow_dispatch:
-
+on: [push, workflow_dispatch]
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
+      - name: Assembler le projet Android
+        run: |
+          mkdir -p app/src/main/java/bj/radio
+          mv ./*.java app/src/main/java/bj/radio/
+          mv AndroidManifest.xml app/src/main/AndroidManifest.xml
+          mv app.gradle app/build.gradle
+          mv sossokouame.keystore app/sossokouame.keystore
+          if [ -f ic_launcher.png ]; then
+            mkdir -p app/src/main/res/mipmap-xxxhdpi app/src/main/res/mipmap-anydpi-v26 app/src/main/res/drawable-xxxhdpi app/src/main/res/values
+            mv ic_launcher.png app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+            mv ic_launcher_foreground.png app/src/main/res/drawable-xxxhdpi/ic_launcher_foreground.png
+            mv ic_launcher_adaptive.xml app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+            mv ic_launcher_colors.xml app/src/main/res/values/ic_launcher_colors.xml
+          fi
+      - name: Ressources Accords & Musique
+        run: |
+          mkdir -p app/src/main/res/drawable app/src/main/res/values
+          mv accords_logo_bg.xml app/src/main/res/drawable/accords_logo_bg.xml
+          mv accords_logo_fg.xml app/src/main/res/drawable/accords_logo_fg.xml
+          mv accords_values.xml app/src/main/res/values/accords_values.xml
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
-
+          java-version: 17
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.7'
-
-      - name: Compiler
-        run: gradle assembleDebug --no-daemon
-
+          gradle-version: 8.7
+      - run: gradle assembleRelease --stacktrace
       - uses: actions/upload-artifact@v4
         with:
-          name: accords-apk
-          path: build/outputs/apk/debug/*.apk
+          name: apk
+          path: 'app/build/outputs/apk/release/*.apk'
+          if-no-files-found: error
