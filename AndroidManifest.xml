@@ -1,17 +1,242 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- TV Kouamé : notification « Programme du jour » à 00h00 (heure du Bénin) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Verrouillage par empreinte digitale -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <!-- Traduction de la voix (vidéos sans sous-titres) : le micro écoute le son de la vidéo -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Analyse : applications installées, chaleur / batterie -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+
+    <!-- Mise à jour de l'application : installer la nouvelle version par-dessus l'ancienne -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!-- Analyse du téléphone -->
+    <uses-permission android:name="android.permission.READ_SMS" />
+
+    <!-- Mes vidéos : lire les vidéos du téléphone -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+
+    <!-- Pour retrouver une éventuelle appli Radio FM du téléphone -->
+    <queries>
+        <!-- Voix de synthèse (traduction audio) -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <!-- Reconnaissance vocale (traduction de la voix) -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <package android:name="com.android.fmradio" />
+        <package android:name="com.mediatek.fmradio" />
+        <package android:name="com.sec.android.app.fm" />
+        <package android:name="com.lge.fmradio" />
+        <package android:name="com.sonyericsson.fmradio" />
+        <package android:name="com.huawei.android.fmradio" />
+    </queries>
+
     <application
-        android:label="Accords"
+        android:name=".App"
+        android:label="Kouamé Play Box"
         android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true"
         android:largeHeap="true"
-        android:theme="@style/AppTheme">
-        <activity android:name=".MainActivity" android:exported="true">
+        android:requestLegacyExternalStorage="true"
+        android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <receiver
+            android:name=".ProgrammeAlarme"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="bj.radio.PROGRAMME_MINUIT" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Résultat de l'installation d'une mise à jour (PackageInstaller) -->
+        <receiver
+            android:name=".MajRecepteur"
+            android:exported="false" />
+
+        <activity
+            android:name=".AuthActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".VerrouActivity"
+            android:exported="false"
+            android:excludeFromRecents="false"
+            android:launchMode="singleTop" />
+
+        <activity
+            android:name=".ParametresActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".RadioActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize" />
+
+        <activity
+            android:name=".TvActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize" />
+
+        <activity
+            android:name=".VideosActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".LecteurVideoActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize" />
+
+        <activity
+            android:name=".HorsLigneActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ListeActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize" />
+
+        <activity
+            android:name=".CompilateurActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize" />
+
+        <activity
+            android:name=".AnalyseActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".SmsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".AdminActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".AdminTvActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".MajActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".PageWebActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".FilmsFacebookActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".TvKouameActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize" />
+
+        <!-- JEUX : menu, Panda Dash / Super Kouamé (plateformes, en paysage) et Serpent -->
+        <activity
+            android:name=".JeuxActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".JeuCommandoActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize" />
+
+        <activity
+            android:name=".JeuPlateformeActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize" />
+
+        <!-- Combat Mortel : menu / salon en ligne (portrait) et combat (paysage) -->
+        <activity
+            android:name=".JeuMotardActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait" />
+
+        <activity
+            android:name=".MotardCombatActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize" />
+
+        <activity
+            android:name=".JeuLiquideActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
+            android:name=".JeuSerpentActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
+            android:name=".FacebookActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+        <!-- ACCORDS & MUSIQUE (intégré) : accueil, analyse d'un morceau, création de chanson, séparateur de voix -->
+        <activity
+            android:name=".AccordsHomeActivity"
+            android:exported="false"
+            android:theme="@style/AccordsTheme" />
+
+        <activity
+            android:name=".AccordsAnalyseActivity"
+            android:exported="false"
+            android:theme="@style/AccordsTheme" />
+
+        <activity
+            android:name=".SongActivity"
+            android:exported="false"
+            android:theme="@style/AccordsTheme" />
+
+        <activity
+            android:name=".StemActivity"
+            android:exported="false"
+            android:theme="@style/AccordsTheme" />
+
     </application>
 </manifest>

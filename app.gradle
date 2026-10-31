@@ -1,0 +1,65 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'bj.radio'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'bj.radio'
+        minSdk 24
+        targetSdk 34
+        // À AUGMENTER à chaque nouvelle version (sinon Android refuse de remplacer l'ancienne).
+        versionCode 18
+        versionName '1.18'
+    }
+
+    // Clé de signature PERMANENTE : la même à chaque compilation, donc chaque nouvelle version
+    // remplace l'ancienne sans désinstaller. Ne jamais perdre ni changer le fichier sossokouame.keystore.
+    signingConfigs {
+        sossokouame {
+            storeFile file('sossokouame.keystore')
+            storeType 'PKCS12'
+            storePassword 'Yy8xyxKijSLTNcPt53uP'
+            keyAlias 'sossokouame'
+            keyPassword 'Yy8xyxKijSLTNcPt53uP'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.sossokouame
+        }
+        release {
+            signingConfig signingConfigs.sossokouame
+            minifyEnabled false
+        }
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+
+    packaging {
+        jniLibs { useLegacyPackaging = true }   // Vosk (paroles hors ligne)
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.media3:media3-exoplayer:1.4.1'
+    implementation 'androidx.media3:media3-exoplayer-hls:1.4.1'
+    implementation 'androidx.media3:media3-ui:1.4.1'
+
+    // Accords & Musique : paroles hors ligne (Vosk), séparation de pistes (ONNX) et MP3 (LAME)
+    implementation 'net.java.dev.jna:jna:5.13.0@aar'
+    implementation 'com.alphacephei:vosk-android:0.3.47@aar'
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.19.2'
+    implementation 'com.github.Jay-Goo:Mp3Converter:0.0.34'
+}

@@ -1,4 +1,4 @@
-package com.accords.app;
+package bj.radio;
 
 import android.graphics.Canvas;
 import android.graphics.Paint;

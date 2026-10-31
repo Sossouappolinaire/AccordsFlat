@@ -1,760 +1,324 @@
-package com.accords.app;
+package bj.radio;
 
+import android.animation.Animator;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
-import android.content.SharedPreferences;
-import android.database.Cursor;
-import android.content.res.ColorStateList;
 import android.graphics.Color;
-import android.graphics.Typeface;
-import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
-import android.provider.OpenableColumns;
-import android.text.Spannable;
-import android.text.SpannableString;
-import android.text.style.BackgroundColorSpan;
-import android.text.style.ForegroundColorSpan;
-import android.text.style.StyleSpan;
 import android.view.Gravity;
 import android.view.View;
-import android.widget.*;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.widget.Toast;
 
-import java.io.OutputStream;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
-import java.util.concurrent.CountDownLatch;
+import java.util.Map;
 
 public class MainActivity extends Activity {
 
-    private static final int PICK = 1, SAVE_PDF = 2;
-
-    private Uri audioUri;
-    private String audioName = "audio.mp3";
-    private AudioDecoder.Result decoded;
-
-    private ChordAnalyzer.Analysis analysis;
-    private ChordAnalyzer.Grid grid;
-    private List<Lyrics.Word> lyricWords;
-    private List<Lyrics.Line> lyricLines;
-    private String instrument = "piano";
-    private int gridBase;
-    private int transpose = 0;
-    private boolean chordsShown = false;
-    private BackgroundColorSpan curSpan;
-    private ForegroundColorSpan curFg;
-    private String lastChord = "";
-
-    // progression des tâches longues
-    private volatile boolean busy = false;
-    private volatile int stageBase = 0, stageWeight = 100;
-    private volatile boolean creeping = false;
-
-    private MediaPlayer player;
-    private final Handler handler = new Handler(Looper.getMainLooper());
-    private final Runnable ticker = new Runnable() {
-        public void run() {
-            tick();
-            if (player != null && player.isPlaying()) handler.postDelayed(this, 100);
-        }
-    };
-
-    private TextView fileLabel, modelStatus, output, currentChord, lyricNow, transposeLabel, progressText;
-    private SeekBar seek;
-    private Button bPlay;
-    private ProgressBar bar;
-    private Button[] actions;
-
-    interface Task { String run() throws Exception; }
-
-    private int dp(int v) { return (int) (v * getResources().getDisplayMetrics().density); }
-
-    private void loadPrefs() {
-        SharedPreferences sp = getSharedPreferences("cfg", MODE_PRIVATE);
-        ChordAnalyzer.flats = sp.getBoolean("flats", false);
-        ChordAnalyzer.allowSevenths = sp.getBoolean("sevenths", false);
-        instrument = sp.getString("instrument", "piano");
+    private LinearLayout mosaique;
+    private LinearLayout ligne;
+    private TextView bandeauMaj;
+    private int rang = 0;
+    /** Une tuile de l'accueil (réglages d'origine, modifiables par le fichier de configuration de la base). */
+    private static final class T {
+        String id, emoji, titre, desc, action = "";
+        int c1, c2;
+        Class<?> cible;
+        boolean visible = true;
     }
+
+    private final Map<String, Class<?>> ecrans = new HashMap<>();
+    private final List<Animator> animations = new ArrayList<>();
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
-        loadPrefs();
-        final int p = dp(16);
+        Ui.fenetre(this);
 
-        // ===== Zone fixe : en-tête + lecteur =====
-        LinearLayout top = new LinearLayout(this);
-        top.setOrientation(LinearLayout.VERTICAL);
-        top.setPadding(p, p, p, 0);
+        // Il faut un compte pour entrer dans l'application.
+        if (!Compte.connecte()) {
+            startActivity(new Intent(this, AuthActivity.class));
+            finish();
+            return;
+        }
 
-        // En-tête : logo + titre
-        LinearLayout header = Ui.row(this);
-        FrameLayout logo = new FrameLayout(this);
-        logo.setBackground(Ui.gradient(Ui.VIOLET, Ui.MAGENTA, dp(14)));
-        logo.setClipToOutline(true);
-        ImageView logoImg = new ImageView(this);
-        logoImg.setImageResource(R.drawable.ic_launcher_fg);
-        logoImg.setScaleX(1.7f);
-        logoImg.setScaleY(1.7f);
-        logo.addView(logoImg, new FrameLayout.LayoutParams(-1, -1));
-        header.addView(logo, new LinearLayout.LayoutParams(dp(46), dp(46)));
-        LinearLayout titles = new LinearLayout(this);
-        titles.setOrientation(LinearLayout.VERTICAL);
-        titles.setPadding(dp(12), 0, 0, 0);
-        TextView title = new TextView(this);
-        title.setText("Accords");
-        title.setTextSize(22);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setTextColor(Ui.TEXT);
-        TextView subtitle = new TextView(this);
-        subtitle.setText("Notes · accords · paroles");
-        subtitle.setTextSize(12);
-        subtitle.setTextColor(Ui.MUTED);
-        titles.addView(title);
-        titles.addView(subtitle);
-        header.addView(titles);
-        top.addView(header);
+        // TV Kouamé : notification « Programme du jour » chaque jour à 00h00 (heure du Bénin)
+        if (android.os.Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 11);
+        }
+        ProgrammeAlarme.planifier(this);
 
-        // Carte lecteur (dégradé)
-        LinearLayout playerCard = new LinearLayout(this);
-        playerCard.setOrientation(LinearLayout.VERTICAL);
-        playerCard.setBackground(Ui.gradient(0xFF3A2D9C, 0xFF7B2FA8, dp(24)));
-        playerCard.setPadding(p, p, p, p);
-        playerCard.setElevation(dp(6));
-
-        currentChord = new TextView(this);
-        currentChord.setText("—");
-        currentChord.setTextSize(46);
-        currentChord.setTypeface(Typeface.DEFAULT_BOLD);
-        currentChord.setTextColor(Color.WHITE);
-        currentChord.setGravity(Gravity.CENTER);
-        currentChord.setShadowLayer(dp(8), 0, dp(2), 0x66000000);
-        playerCard.addView(currentChord);
-
-        lyricNow = new TextView(this);
-        lyricNow.setTextSize(15);
-        lyricNow.setTextColor(0xFFF1F2FF);
-        lyricNow.setGravity(Gravity.CENTER);
-        lyricNow.setMinLines(2);
-        playerCard.addView(lyricNow);
-
-        seek = new SeekBar(this);
-        seek.setProgressTintList(ColorStateList.valueOf(Ui.AMBER));
-        seek.setProgressBackgroundTintList(ColorStateList.valueOf(0x44FFFFFF));
-        seek.setThumbTintList(ColorStateList.valueOf(Ui.AMBER));
-        seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            public void onProgressChanged(SeekBar sb, int v, boolean fromUser) {
-                if (fromUser && player != null) { player.seekTo(v); tick(); }
-            }
-            public void onStartTrackingTouch(SeekBar sb) { }
-            public void onStopTrackingTouch(SeekBar sb) { }
-        });
-        playerCard.addView(seek, Ui.lp(this, -1, -2, 6));
-
-        // Commandes : transposition | lecture | PDF
-        LinearLayout controls = Ui.row(this);
-
-        LinearLayout left = Ui.row(this);
-        left.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-        LinearLayout pill = Ui.row(this);
-        pill.setBackground(Ui.solid(0x26FFFFFF, dp(22)));
-        Button bMinus = Ui.iconButton(this, "−");
-        bMinus.setOnClickListener(v -> changeTranspose(-1));
-        transposeLabel = new TextView(this);
-        transposeLabel.setGravity(Gravity.CENTER);
-        transposeLabel.setTextSize(12);
-        transposeLabel.setTextColor(Color.WHITE);
-        transposeLabel.setPadding(dp(4), 0, dp(4), 0);
-        Button bPlus = Ui.iconButton(this, "+");
-        bPlus.setOnClickListener(v -> changeTranspose(1));
-        pill.addView(bMinus, new LinearLayout.LayoutParams(dp(40), dp(40)));
-        pill.addView(transposeLabel, new LinearLayout.LayoutParams(-2, -2));
-        pill.addView(bPlus, new LinearLayout.LayoutParams(dp(40), dp(40)));
-        left.addView(pill);
-        controls.addView(left, new LinearLayout.LayoutParams(0, -2, 1f));
-
-        bPlay = Ui.circle(this, "▶", Ui.AMBER, Ui.ORANGE, Ui.DARK);
-        bPlay.setOnClickListener(v -> togglePlay());
-        controls.addView(bPlay, new LinearLayout.LayoutParams(dp(60), dp(60)));
-
-        LinearLayout right = Ui.row(this);
-        right.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        Button bPdf = Ui.chip(this, "PDF");
-        bPdf.setOnClickListener(v -> exportPdf());
-        right.addView(bPdf);
-        controls.addView(right, new LinearLayout.LayoutParams(0, -2, 1f));
-
-        playerCard.addView(controls, Ui.lp(this, -1, -2, 6));
-        top.addView(playerCard, Ui.lp(this, -1, -2, 14));
-        updateTransposeLabel();
-
-        // ===== Partie défilante =====
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(p, p, p, p);
-
-        // Carte fichier
-        LinearLayout fileCard = new LinearLayout(this);
-        fileCard.setOrientation(LinearLayout.VERTICAL);
-        Ui.card(fileCard, this);
-        Button pick = Ui.button(this, "♪  Choisir un fichier audio", Ui.VIOLET, Ui.MAGENTA, Color.WHITE);
-        pick.setOnClickListener(v -> {
-            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-            i.addCategory(Intent.CATEGORY_OPENABLE);
-            i.setType("audio/*");
-            startActivityForResult(i, PICK);
-        });
-        fileCard.addView(pick);
-        fileLabel = new TextView(this);
-        fileLabel.setText("Aucun fichier choisi");
-        fileLabel.setTextColor(Ui.TEXT);
-        fileLabel.setTextSize(14);
-        fileCard.addView(fileLabel, Ui.lp(this, -1, -2, 10));
-        modelStatus = new TextView(this);
-        modelStatus.setTextSize(12);
-        modelStatus.setTextColor(Ui.MUTED);
-        fileCard.addView(modelStatus, Ui.lp(this, -1, -2, 2));
-        body.addView(fileCard);
-
-        // Carte actions
-        LinearLayout actionsCard = new LinearLayout(this);
-        actionsCard.setOrientation(LinearLayout.VERTICAL);
-        Ui.card(actionsCard, this);
-        TextView actionsTitle = new TextView(this);
-        actionsTitle.setText("ANALYSE");
-        actionsTitle.setTextSize(11);
-        actionsTitle.setLetterSpacing(0.15f);
-        actionsTitle.setTypeface(Typeface.DEFAULT_BOLD);
-        actionsTitle.setTextColor(Ui.MUTED);
-        actionsCard.addView(actionsTitle);
-
-        // --- Accords ---
-        Button bChords = Ui.button(this, "Accords, notes et grille", Ui.VIOLET, Ui.MAGENTA, Color.WHITE);
-        bChords.setOnClickListener(v -> runTask("Analyse des accords…", () -> {
-            analysis = null;
-            prepare(0, 20, decoded == null ? 80 : 100);
-            return "";
-        }, this::renderChords));
-
-        // --- Paroles hors ligne ---
-        Button bOff = Ui.button(this, "Paroles + accords (hors ligne)", Ui.TEAL, Ui.BLUE, Color.WHITE);
-        bOff.setOnClickListener(v -> runTask("Paroles hors ligne…", () -> {
-            int base = 0;
-            if (!ModelDownloader.isReady(this)) {
-                stage(0, 15);
-                ensureModel(true);
-                base = 15;
-            }
-            base = prepare(base, 10, 30);
-            stage(base, 100 - base);
-            AudioDecoder.Result d = getDecoded(null);
-            float[] x16 = AudioDecoder.resample(d.samples, d.sampleRate, 16000);
-            final List<Lyrics.Word> words = new ArrayList<>();
-            final String[] err = new String[1];
-            CountDownLatch latch = new CountDownLatch(1);
-            LyricsOffline.transcribe(this, x16, new LyricsOffline.Callback() {
-                public void onResult(List<Lyrics.Word> w) { words.addAll(w); latch.countDown(); }
-                public void onError(String m) { err[0] = m; latch.countDown(); }
-            }, pct -> report(pct, "Reconnaissance des paroles"));
-            latch.await();
-            if (err[0] != null) throw new Exception(err[0]);
-            setLyrics(words);
-            return "";
-        }, this::renderChords));
-
-        // --- Paroles en ligne ---
-        Button bOn = Ui.button(this, "Paroles + accords (en ligne)", Ui.BLUE, Ui.INDIGO, Color.WHITE);
-        bOn.setOnClickListener(v -> {
-            SharedPreferences sp = getSharedPreferences("cfg", MODE_PRIVATE);
-            runTask("Paroles en ligne…", () -> {
-                final int base = prepare(0, 10, 30);
-                final int rem = 100 - base;
-                final int upW = rem * 3 / 10;
-                final double estSec = Math.max(10, analysis.dur / 8);
-                List<Lyrics.Word> words;
-                try {
-                    words = LyricsOnline.transcribe(this, audioUri, audioName,
-                            sp.getString("url", "https://api.openai.com/v1"),
-                            sp.getString("key", ""),
-                            sp.getString("model", "whisper-1"),
-                            new LyricsOnline.Listener() {
-                                public void onUpload(int pct) {
-                                    stage(base, upW);
-                                    report(pct, "Envoi de l'audio au serveur");
-                                }
-                                public void onWaiting() { startCreep(base + upW, rem - upW, estSec); }
-                            });
-                } finally {
-                    creeping = false;
-                }
-                setLyrics(words);
-                return "";
-            }, this::renderChords);
-        });
-
-        Button bSet = Ui.ghost(this, "⚙  Réglages (notation, instrument, API)");
-        bSet.setOnClickListener(v -> showSettings());
-
-        actions = new Button[]{bChords, bOff, bOn};
-        actionsCard.addView(bChords, Ui.lp(this, -1, -2, 10));
-        actionsCard.addView(bOff, Ui.lp(this, -1, -2, 10));
-        actionsCard.addView(bOn, Ui.lp(this, -1, -2, 10));
-        actionsCard.addView(bSet, Ui.lp(this, -1, -2, 12));
-        body.addView(actionsCard, Ui.lp(this, -1, -2, 14));
-
-        // Progression
-        bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        bar.setMax(100);
-        bar.setIndeterminate(false);
-        bar.setProgressTintList(ColorStateList.valueOf(Ui.AMBER));
-        bar.setProgressBackgroundTintList(ColorStateList.valueOf(0x33FFFFFF));
-        bar.setVisibility(View.INVISIBLE);
-        body.addView(bar, Ui.lp(this, -1, dp(6), 14));
-
-        progressText = new TextView(this);
-        progressText.setTextSize(12);
-        progressText.setTextColor(Ui.MUTED);
-        progressText.setGravity(Gravity.CENTER);
-        body.addView(progressText, Ui.lp(this, -1, -2, 4));
-
-        // Carte résultats
-        LinearLayout outCard = new LinearLayout(this);
-        outCard.setOrientation(LinearLayout.VERTICAL);
-        Ui.card(outCard, this);
-        output = new TextView(this);
-        output.setTypeface(Typeface.MONOSPACE);
-        output.setTextSize(12);
-        output.setTextColor(Ui.TEXT);
-        output.setTextIsSelectable(true);
-        outCard.addView(output);
-        body.addView(outCard, Ui.lp(this, -1, -2, 10));
-
-        ScrollView sv = new ScrollView(this);
-        sv.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        sv.addView(body);
+        int p = Ui.dp(this, 14);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Ui.BG);
-        root.addView(top);
-        root.addView(sv, new LinearLayout.LayoutParams(-1, 0, 1f));
-        setContentView(root);
+        root.setPadding(p, p * 2, p, p);
 
-        // Animations d'entrée
-        Ui.enter(header, 0);
-        Ui.enter(playerCard, 80);
-        Ui.enter(fileCard, 160);
-        Ui.enter(actionsCard, 240);
-        Ui.enter(outCard, 320);
+        final JSONObject cfg = Config.contenu(this);
+        String titreApp = Config.titreApp(this);
+        TextView titre = Ui.texte(this, titreApp, 34, Ui.JAUNE, true);
+        titre.setGravity(Gravity.CENTER);
+        root.addView(titre);
+        animations.add(Ui.titreColore(titre));
+        Ui.entree(titre, 0);
 
-        if (ModelDownloader.isReady(this)) {
-            modelStatus.setText("Modèle de paroles hors ligne : prêt ✓");
-        } else {
-            modelStatus.setText("Premier démarrage : téléchargement du modèle de paroles (≈ 40 Mo)…");
-            new Thread(() -> {
-                try { ensureModel(false); }
-                catch (Exception e) {
-                    runOnUiThread(() -> modelStatus.setText("Téléchargement impossible (" + e.getMessage()
-                            + "). Il sera retenté au prochain usage des paroles hors ligne."));
-                }
-            }).start();
+        String nom = Compte.nom();
+        String sousDefaut = cfg != null && !cfg.optString("sous_titre", "").trim().isEmpty() ? cfg.optString("sous_titre").trim() : "Radio, TV & vidéos";
+        TextView sous = Ui.texte(this, nom.isEmpty() ? sousDefaut : "Bonjour " + nom + " 👋", 16, Ui.TXT2, false);
+        sous.setGravity(Gravity.CENTER);
+        root.addView(sous, Ui.lp(this, -1, -2, 0f, 4, 0));
+        Ui.entree(sous, 1);
+
+        String bandeau = cfg == null ? "" : cfg.optString("bandeau", "").trim();
+        if (!bandeau.isEmpty()) {
+            TextView bd = Ui.texte(this, bandeau, 14, Ui.JAUNE, true);
+            bd.setGravity(Gravity.CENTER);
+            root.addView(bd, Ui.lp(this, -1, -2, 0f, 10, 0));
         }
-    }
 
-    /** Affiche l'accord courant avec un petit effet « pop » quand il change. */
-    private void setChord(String c) {
-        if (c.equals(lastChord)) return;
-        lastChord = c;
-        currentChord.setText(c);
-        currentChord.setScaleX(1.18f);
-        currentChord.setScaleY(1.18f);
-        currentChord.animate().scaleX(1f).scaleY(1f).setDuration(180).start();
-    }
-
-    // ---------------- Progression ----------------
-
-    private void stage(int base, int weight) {
-        stageBase = base;
-        stageWeight = weight;
-    }
-
-    /** pctInStage : 0-100 dans l'étape en cours ; la barre globale va de 0 à 100 %. */
-    private void report(int pctInStage, String label) {
-        if (!busy) return;
-        int in = Math.max(0, Math.min(100, pctInStage));
-        final int total = Math.min(100, stageBase + stageWeight * in / 100);
-        runOnUiThread(() -> {
-            if (!busy) return;
-            bar.setProgress(total);
-            progressText.setText(label + " : " + total + " %");
+        // Mise à jour de l'appli : bandeau visible tant que la nouvelle version n'est pas installée.
+        bandeauMaj = Ui.texte(this, "", 15, 0xFF222222, true);
+        bandeauMaj.setGravity(Gravity.CENTER);
+        bandeauMaj.setBackground(Ui.rond(Ui.JAUNE, 16, this));
+        int pm = Ui.dp(this, 12);
+        bandeauMaj.setPadding(pm, pm, pm, pm);
+        bandeauMaj.setVisibility(View.GONE);
+        bandeauMaj.setOnClickListener(v -> {
+            JSONObject r = MiseAJour.derniere;
+            if (r != null && MiseAJour.disponible(this, r)) MiseAJour.proposer(this, r);
         });
+        root.addView(bandeauMaj, Ui.lp(this, -1, -2, 0f, 14, 0));
+        afficherBandeauMaj();
+
+        mosaique = new LinearLayout(this);
+        mosaique.setOrientation(LinearLayout.VERTICAL);
+        root.addView(mosaique, Ui.lp(this, -1, -2, 0f, 20, 0));
+
+        List<T> liste = new ArrayList<>();
+        def(liste, "radio", "📻", "Radio", "Radios par pays et par ville", Ui.ACCENT, 0xFFFF3D6E, RadioActivity.class);
+        def(liste, "tv", "📺", "Télévision", "Chaînes du monde, en plein écran", Ui.VIOLET, 0xFF3A7BFF, TvActivity.class);
+        def(liste, "tvkouame", "📡", "TV Kouamé", "Programme du jour, nouveau chaque jour à 00h00", 0xFFE91E63, 0xFFFF9800, TvKouameActivity.class);
+        def(liste, "jeux", "🎮", "JEUX", "Panda Dash, Super Kouamé, Serpent, Commando, Liquide et Combat Mortel", 0xFF8E24AA, 0xFFFF5252, JeuxActivity.class);
+        def(liste, "facebook", "📘", "Télécharger Facebook", "Une vidéo Facebook, en qualité standard ou HD", 0xFF1877F2, 0xFF5B3DF5, FacebookActivity.class);
+        def(liste, "films", "🎞", "Films partagés", "Les films ajoutés par les utilisateurs", 0xFF0E5FCB, 0xFF12B5CB, FilmsFacebookActivity.class);
+        def(liste, "telechargements", "📥", "Téléchargements", "Facebook, galerie et liens, classés à part", 0xFF2E9E73, 0xFF9BCB3C, HorsLigneActivity.class);
+        def(liste, "accords", "🎼", "Accords & Musique", "Analyser un morceau, créer une chanson, séparer les voix en MP3", 0xFF6D4AFF, 0xFFC13FD6, AccordsHomeActivity.class);
+        def(liste, "compilateur", "🛠", "Compiler un projet", "Zip Android → APK à télécharger", 0xFF16A085, 0xFF2D8CFF, CompilateurActivity.class);
+        def(liste, "analyse", "🛡", "Analyse du téléphone", "Fichiers malveillants et cachés", 0xFFC0392B, 0xFFE67E22, AnalyseActivity.class);
+        def(liste, "sms", "💬", "Messages SMS", "Lire vos SMS reçus et envoyés", 0xFF2980B9, 0xFF8E44AD, SmsActivity.class);
+        if (Compte.admin()) def(liste, "admin", "👑", "Administration", "Comptes, en ligne, téléchargements, liens", 0xFF8E44AD, 0xFFE91E63, AdminActivity.class);
+        def(liste, "parametres", "⚙", "Paramètres", "Compte, code PIN et empreinte digitale", 0xFF6C7A89, 0xFF34495E, ParametresActivity.class);
+
+        liste = appliquerConfig(liste, cfg);
+        for (T t : liste) if (t.visible) tuile(t);
+
+        ScrollView sv = new ScrollView(this);
+        sv.setFillViewport(true);
+        sv.addView(root);
+        animations.add(Ui.fondAnime(sv));
+        setContentView(sv);
+        afficherAnnonce(cfg);
     }
 
-    /** Pendant que le serveur travaille (durée inconnue), la barre monte jusqu'à 95 % selon une estimation. */
-    private void startCreep(int base, int weight, double estSec) {
-        stage(base, weight);
-        creeping = true;
-        new Thread(() -> {
-            long t0 = System.currentTimeMillis();
-            while (creeping) {
-                double el = (System.currentTimeMillis() - t0) / 1000.0;
-                report((int) Math.min(95, 100 * el / estSec), "Le serveur transcrit (estimation)");
-                try { Thread.sleep(500); } catch (InterruptedException e) { return; }
-            }
-        }).start();
-    }
-
-    /** Décodage + analyse des accords si pas déjà faits. Retourne la nouvelle base de progression. */
-    private int prepare(int base, int wDec, int wAna) throws Exception {
-        if (decoded == null) {
-            stage(base, wDec);
-            getDecoded(pct -> report(pct, "Décodage de l'audio"));
-            base += wDec;
-        }
-        if (analysis == null) {
-            stage(base, wAna);
-            AudioDecoder.Result d = getDecoded(null);
-            analysis = ChordAnalyzer.analyze(
-                    AudioDecoder.resample(d.samples, d.sampleRate, ChordAnalyzer.SR),
-                    pct -> report(pct, "Analyse des accords"));
-            base += wAna;
-        }
-        return base;
-    }
-
-    private void setLyrics(List<Lyrics.Word> words) {
-        lyricWords = words;
-        lyricLines = Lyrics.lines(words);
-    }
-
-    // ---------------- Fichier audio ----------------
-
-    @Override
-    protected void onActivityResult(int req, int res, Intent data) {
-        super.onActivityResult(req, res, data);
-        if (res != RESULT_OK || data == null || data.getData() == null) return;
-
-        if (req == PICK) {
-            releasePlayer();
-            audioUri = data.getData();
-            decoded = null;
-            analysis = null;
-            grid = null;
-            lyricWords = null;
-            lyricLines = null;
-            chordsShown = false;
-            audioName = "audio.mp3";
-            try (Cursor c = getContentResolver().query(audioUri, null, null, null, null)) {
-                if (c != null && c.moveToFirst()) {
-                    int i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME);
-                    if (i >= 0) audioName = c.getString(i);
-                }
-            } catch (Exception ignored) { }
-            fileLabel.setText(audioName);
-            output.setText("");
-            progressText.setText("");
-            bar.setVisibility(View.INVISIBLE);
-            setChord("—");
-            lyricNow.setText("");
-            seek.setProgress(0);
-            bPlay.setText("▶");
-        } else if (req == SAVE_PDF) {
-            try (OutputStream os = getContentResolver().openOutputStream(data.getData())) {
-                PdfExporter.write(os, audioName, chordsText());
-                Toast.makeText(this, "PDF enregistré", Toast.LENGTH_SHORT).show();
-            } catch (Exception e) {
-                Toast.makeText(this, "Export impossible : " + e.getMessage(), Toast.LENGTH_LONG).show();
-            }
+    /** Affiche (ou cache) le bandeau « Nouvelle mise à jour » selon la dernière réponse de la base. */
+    private void afficherBandeauMaj() {
+        if (bandeauMaj == null) return;
+        JSONObject r = MiseAJour.derniere;
+        if (r != null && MiseAJour.disponible(this, r)) {
+            bandeauMaj.setText("🆕 " + MiseAJour.resume(r) + "\nTouchez ici pour mettre à jour");
+            bandeauMaj.setVisibility(View.VISIBLE);
+        } else {
+            bandeauMaj.setVisibility(View.GONE);
         }
     }
 
-    private synchronized AudioDecoder.Result getDecoded(java.util.function.IntConsumer prog) throws Exception {
-        if (decoded == null) decoded = AudioDecoder.decodeMono(this, audioUri, prog);
-        return decoded;
+    private void def(List<T> liste, String id, String emoji, String titre, String desc, int c1, int c2, Class<?> cible) {
+        T t = new T();
+        t.id = id;
+        t.emoji = emoji;
+        t.titre = titre;
+        t.desc = desc;
+        t.c1 = c1;
+        t.c2 = c2;
+        t.cible = cible;
+        liste.add(t);
+        ecrans.put(id, cible);
     }
 
-    // ---------------- Accords, paroles, transposition, illumination ----------------
-
-    private String chordsText() {
-        grid = ChordAnalyzer.buildGrid(analysis, transpose);
-        StringBuilder h = new StringBuilder(ChordAnalyzer.summary(analysis, transpose)).append('\n');
-        if (lyricWords != null) {
-            h.append("PAROLES ET ACCORDS :\n\n")
-                    .append(Lyrics.sheet(lyricWords, analysis, transpose, instrument)).append('\n');
-        }
-        h.append("GRILLE D'ACCORDS (début à ").append(String.format(Locale.US, "%.1f", analysis.t0)).append(" s");
-        if (transpose != 0) h.append(", transposée de ").append(signed(transpose));
-        h.append(") :\n");
-        gridBase = h.length();
-        return h + grid.text;
-    }
-
-    private void renderChords() {
-        if (analysis == null) return;
-        String full = chordsText();
-        output.setText(full, TextView.BufferType.SPANNABLE);
-        output.setAlpha(0.2f);
-        output.animate().alpha(1f).setDuration(350).start();
-        chordsShown = true;
-        curSpan = null;
-        curFg = null;
-        tick();
-    }
-
-    private String signed(int v) { return (v >= 0 ? "+" : "") + v; }
-
-    private void updateTransposeLabel() { transposeLabel.setText("Transp. " + signed(transpose)); }
-
-    private void changeTranspose(int d) {
-        transpose += d;
-        if (transpose > 6) transpose -= 12;
-        if (transpose < -6) transpose += 12;
-        updateTransposeLabel();
-        if (analysis != null && chordsShown) renderChords(); else tick();
-    }
-
-    private void highlight(int idx) {
-        if (!chordsShown || grid == null) return;
-        CharSequence t = output.getText();
-        if (!(t instanceof Spannable)) return;
-        Spannable sp = (Spannable) t;
-        if (curSpan != null) { sp.removeSpan(curSpan); curSpan = null; }
-        if (curFg != null) { sp.removeSpan(curFg); curFg = null; }
-        if (idx >= 0 && idx < grid.start.length && grid.end[idx] > grid.start[idx]) {
-            curSpan = new BackgroundColorSpan(Ui.AMBER);
-            curFg = new ForegroundColorSpan(Ui.DARK);
-            sp.setSpan(curSpan, gridBase + grid.start[idx], gridBase + grid.end[idx],
-                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-            sp.setSpan(curFg, gridBase + grid.start[idx], gridBase + grid.end[idx],
-                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-        }
-    }
-
-    // ---------------- Lecture ----------------
-
-    private void togglePlay() {
-        if (audioUri == null) {
-            Toast.makeText(this, "Choisis d'abord un fichier audio", Toast.LENGTH_SHORT).show();
-            return;
-        }
+    private static int couleur(String s, int defaut) {
         try {
-            if (player == null) {
-                player = MediaPlayer.create(this, audioUri);
-                if (player == null) throw new Exception("Lecture impossible");
-                seek.setMax(player.getDuration());
-                player.setOnCompletionListener(mp -> {
-                    bPlay.setText("▶");
-                    handler.removeCallbacks(ticker);
-                });
+            return s == null || s.isEmpty() ? defaut : Color.parseColor(s.trim());
+        } catch (Exception e) {
+            return defaut;
+        }
+    }
+
+    private static T trouver(List<T> liste, String id) {
+        for (T t : liste) if (t.id.equals(id)) return t;
+        return null;
+    }
+
+    /** Applique le fichier de configuration de la base : modifier, masquer, ajouter et ordonner les tuiles. */
+    private List<T> appliquerConfig(List<T> liste, JSONObject cfg) {
+        if (cfg == null) return liste;
+        JSONArray arr = cfg.optJSONArray("tuiles");
+        for (int i = 0; arr != null && i < arr.length(); i++) {
+            JSONObject o = arr.optJSONObject(i);
+            if (o == null) continue;
+            String id = o.optString("id", "").trim();
+            if (id.isEmpty()) continue;
+            T t = trouver(liste, id);
+            if (t == null) {
+                t = new T();
+                t.id = id;
+                t.emoji = "⭐";
+                t.titre = id;
+                t.desc = "";
+                t.c1 = Ui.VIOLET;
+                t.c2 = 0xFF3A7BFF;
+                liste.add(t);
             }
-            if (player.isPlaying()) {
-                player.pause();
-                bPlay.setText("▶");
-            } else {
-                player.start();
-                bPlay.setText("⏸");
-                handler.post(ticker);
+            boolean protege = id.equals("admin") || id.equals("parametres");   // jamais masqués : on ne peut pas se bloquer l'accès
+            if (o.has("masquer") && !protege) t.visible = !o.optBoolean("masquer");
+            if (o.optBoolean("admin_seulement") && !Compte.admin()) t.visible = false;
+            if (o.has("emoji")) t.emoji = o.optString("emoji", t.emoji);
+            if (o.has("titre")) t.titre = o.optString("titre", t.titre);
+            if (o.has("desc")) t.desc = o.optString("desc", t.desc);
+            if (o.has("c1")) t.c1 = couleur(o.optString("c1"), t.c1);
+            if (o.has("c2")) t.c2 = couleur(o.optString("c2"), t.c2);
+            if (o.has("action")) t.action = o.optString("action", "");
+        }
+        JSONArray ordre = cfg.optJSONArray("ordre");
+        if (ordre == null) return liste;
+        List<T> res = new ArrayList<>();
+        for (int i = 0; i < ordre.length(); i++) {
+            T t = trouver(liste, ordre.optString(i, ""));
+            if (t != null && !res.contains(t)) res.add(t);
+        }
+        for (T t : liste) if (!res.contains(t)) res.add(t);
+        return res;
+    }
+
+    /** Annonce : fenêtre affichée une seule fois par identifiant. */
+    private void afficherAnnonce(JSONObject cfg) {
+        JSONObject a = cfg == null ? null : cfg.optJSONObject("annonce");
+        if (a == null) return;
+        String id = a.optString("id", "").trim();
+        String msg = a.optString("message", "").trim();
+        if (id.isEmpty() || msg.isEmpty() || id.equals(Config.annonceVue(this))) return;
+        Config.annonceVue(this, id);
+        new AlertDialog.Builder(this)
+                .setTitle(a.optString("titre", "Annonce"))
+                .setMessage(msg)
+                .setPositiveButton(a.optString("bouton", "OK"), null)
+                .show();
+    }
+
+    private void ouvrir(T t) {
+        String a = t.action == null ? "" : t.action.trim();
+        try {
+            if (a.startsWith("page:")) {
+                startActivity(new Intent(this, PageWebActivity.class).putExtra("id", a.substring(5).trim()));
+            } else if (a.startsWith("url:")) {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(a.substring(4).trim())));
+            } else if (a.startsWith("ecran:")) {
+                Class<?> k = ecrans.get(a.substring(6).trim());
+                if (k != null) startActivity(new Intent(this, k));
+            } else if (t.cible != null) {
+                startActivity(new Intent(this, t.cible));
             }
         } catch (Exception e) {
-            Toast.makeText(this, e.getMessage(), Toast.LENGTH_LONG).show();
-        }
-    }
-
-    private void tick() {
-        if (player == null) return;
-        int pos = player.getCurrentPosition();
-        seek.setProgress(pos);
-        showLyricNow(pos / 1000.0);
-        if (analysis == null) {
-            setChord("—");
-            return;
-        }
-        int idx = ChordAnalyzer.halfIndex(analysis, pos / 1000.0);
-        setChord(idx < 0 ? "—" : ChordAnalyzer.transposeChord(analysis.chords[idx], transpose));
-        highlight(idx);
-    }
-
-    /** Affiche la ligne de paroles en cours (en gras) et la suivante (en gris) pendant la lecture. */
-    private void showLyricNow(double sec) {
-        if (lyricLines == null) {
-            lyricNow.setText("(paroles non extraites : touche « Paroles + accords »)");
-            return;
-        }
-        if (lyricLines.isEmpty()) {
-            lyricNow.setText("(aucune parole détectée)");
-            return;
-        }
-        int i = -1;
-        for (int k = 0; k < lyricLines.size(); k++) {
-            if (lyricLines.get(k).start <= sec + 0.3) i = k; else break;
-        }
-        String cur, next = "";
-        if (i < 0) {
-            cur = "(intro instrumentale)";
-            next = lyricLines.get(0).text;
-        } else {
-            Lyrics.Line l = lyricLines.get(i);
-            cur = sec > l.end + 3 ? "(instrumental)" : l.text;
-            if (i + 1 < lyricLines.size()) next = lyricLines.get(i + 1).text;
-        }
-        SpannableString sp = new SpannableString(cur + "\n" + next);
-        sp.setSpan(new StyleSpan(Typeface.BOLD), 0, cur.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-        if (!next.isEmpty())
-            sp.setSpan(new ForegroundColorSpan(0xFF888888), cur.length() + 1, sp.length(),
-                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-        lyricNow.setText(sp);
-    }
-
-    private void releasePlayer() {
-        handler.removeCallbacks(ticker);
-        if (player != null) {
-            try { player.release(); } catch (Exception ignored) { }
-            player = null;
+            Toast.makeText(this, "Impossible d'ouvrir", Toast.LENGTH_SHORT).show();
         }
     }
 
     @Override
-    protected void onPause() {
-        super.onPause();
-        if (player != null && player.isPlaying()) {
-            player.pause();
-            bPlay.setText("▶");
-        }
-    }
-
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        creeping = false;
-        releasePlayer();
-    }
-
-    // ---------------- PDF ----------------
-
-    private void exportPdf() {
-        if (analysis == null) {
-            Toast.makeText(this, "Lance d'abord « Accords, notes et grille »", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        String base = audioName.replaceAll("\\.[^.]+$", "");
-        Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
-        i.addCategory(Intent.CATEGORY_OPENABLE);
-        i.setType("application/pdf");
-        i.putExtra(Intent.EXTRA_TITLE, "accords-" + base + ".pdf");
-        startActivityForResult(i, SAVE_PDF);
-    }
-
-    // ---------------- Tâches longues ----------------
-
-    private void runTask(String label, Task t, Runnable onDone) {
-        if (audioUri == null) {
-            Toast.makeText(this, "Choisis d'abord un fichier audio", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        setBusy(true);
-        stage(0, 100);
-        bar.setProgress(0);
-        progressText.setText("0 %");
-        chordsShown = false;
-        output.setText(label);
+    protected void onResume() {
+        super.onResume();
+        if (!Compte.connecte()) return;
         new Thread(() -> {
-            String r;
-            boolean ok = true;
-            try { r = t.run(); } catch (Throwable e) { r = "Erreur : " + e.getMessage(); ok = false; }
-            creeping = false;
-            final String out = r;
-            final boolean success = ok;
+            Supabase.battement();
+            Compte.verifierAdmin();
+            // Mise à jour automatique : si le fichier de la base a changé, l'accueil se reconstruit tout seul.
+            boolean nouveau = Config.rafraichir(this);
+            Paquets.synchroniser(this);   // zips de contenu : téléchargés / remplacés s'il y a du nouveau
+            if (nouveau) runOnUiThread(() -> {
+                if (!isFinishing()) recreate();
+            });
+            // Nouvelle version de l'application (APK dans la base) : bandeau + fenêtre « Mettre à jour » avec la date de sortie.
+            final JSONObject maj = Supabase.majDerniere();
+            MiseAJour.derniere = maj;
             runOnUiThread(() -> {
-                setBusy(false);
-                output.setText(out);
-                if (success) {
-                    bar.setProgress(100);
-                    progressText.setText("Terminé : 100 %");
-                    if (onDone != null) onDone.run();
-                } else {
-                    progressText.setText("Échec");
-                }
+                if (isFinishing()) return;
+                afficherBandeauMaj();
+                if (!nouveau && MiseAJour.disponible(this, maj)) MiseAJour.verifierAvecReponse(this, maj);
             });
         }).start();
     }
 
-    private void setBusy(boolean b) {
-        busy = b;
-        if (b) bar.setVisibility(View.VISIBLE);
-        for (Button x : actions) x.setEnabled(!b);
+    @Override
+    protected void onDestroy() {
+        for (Animator a : animations) a.cancel();
+        animations.clear();
+        super.onDestroy();
     }
 
-    private void ensureModel(boolean inTask) throws Exception {
-        ModelDownloader.ensure(this, pct -> {
-            if (inTask) report(pct, "Téléchargement du modèle de paroles");
-            runOnUiThread(() -> modelStatus.setText("Téléchargement du modèle de paroles : " + pct + " %"));
-        });
-        runOnUiThread(() -> modelStatus.setText("Modèle de paroles hors ligne : prêt ✓"));
-    }
+    /**
+     * Une tuile de la mosaïque : dégradé de deux couleurs, grande icône qui flotte, titre, description.
+     * Les rangées alternent leurs largeurs (1 / 1,35 puis 1,35 / 1) pour casser la grille régulière.
+     */
+    private void tuile(final T t) {
+        if (rang % 2 == 0) {
+            ligne = new LinearLayout(this);
+            ligne.setOrientation(LinearLayout.HORIZONTAL);
+            mosaique.addView(ligne, Ui.lp(this, -1, -2, 0f, 0, 0));
+        }
+        int rangee = rang / 2;
+        boolean gauche = rang % 2 == 0;
+        float poids = (rangee % 2 == 0) == gauche ? 1f : 1.35f;
+        int hauteur = rangee % 2 == 0 ? 150 : 162;
 
-    // ---------------- Réglages ----------------
+        LinearLayout carte = new LinearLayout(this);
+        carte.setOrientation(LinearLayout.VERTICAL);
+        carte.setGravity(Gravity.CENTER);
+        carte.setBackground(Ui.onde(t.c1, t.c2, 22, this));
+        carte.setElevation(Ui.dp(this, 4));
+        int q = Ui.dp(this, 10);
+        carte.setPadding(q, q, q, q);
+        carte.setClickable(true);
+        carte.setOnClickListener(v -> ouvrir(t));
+        Ui.pression(carte);
 
-    private void showSettings() {
-        SharedPreferences sp = getSharedPreferences("cfg", MODE_PRIVATE);
-        LinearLayout l = new LinearLayout(this);
-        l.setOrientation(LinearLayout.VERTICAL);
-        l.setPadding(dp(16), dp(16), dp(16), 0);
+        TextView e = Ui.texte(this, t.emoji, 40, Ui.TXT, false);
+        e.setGravity(Gravity.CENTER);
+        carte.addView(e);
 
-        CheckBox cbFlat = new CheckBox(this);
-        cbFlat.setText("Bémols (Réb, Mib, Solb…) au lieu de dièses");
-        cbFlat.setChecked(sp.getBoolean("flats", false));
-        cbFlat.setButtonTintList(ColorStateList.valueOf(Ui.AMBER));
-        l.addView(cbFlat);
+        TextView ti = Ui.texte(this, t.titre, 16, Ui.TXT, true);
+        ti.setGravity(Gravity.CENTER);
+        carte.addView(ti, Ui.lp(this, -1, -2, 0f, 6, 0));
 
-        CheckBox cbSev = new CheckBox(this);
-        cbSev.setText("Inclure les accords de 7ème (moins fiable)");
-        cbSev.setChecked(sp.getBoolean("sevenths", false));
-        cbSev.setButtonTintList(ColorStateList.valueOf(Ui.AMBER));
-        l.addView(cbSev);
+        TextView d = Ui.texte(this, t.desc, 11, 0xDDFFFFFF, false);
+        d.setGravity(Gravity.CENTER);
+        d.setMaxLines(3);
+        carte.addView(d, Ui.lp(this, -1, -2, 0f, 3, 0));
 
-        EditText inst = field(l, "Instrument des intros/solos (ex. piano)", sp.getString("instrument", "piano"));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, Ui.dp(this, hauteur), poids);
+        int m = Ui.dp(this, 6);
+        lp.setMargins(m, m, m, m);
+        ligne.addView(carte, lp);
 
-        TextView apiTitle = new TextView(this);
-        apiTitle.setText("\nAPI en ligne (compatible OpenAI)");
-        l.addView(apiTitle);
-        EditText url = field(l, "URL de l'API", sp.getString("url", "https://api.openai.com/v1"));
-        EditText key = field(l, "Clé API", sp.getString("key", ""));
-        EditText model = field(l, "Modèle", sp.getString("model", "whisper-1"));
-
-        ScrollView sv = new ScrollView(this);
-        sv.addView(l);
-        new AlertDialog.Builder(this)
-                .setTitle("Réglages")
-                .setView(sv)
-                .setPositiveButton("Enregistrer", (d, w) -> {
-                    boolean sevChanged = cbSev.isChecked() != ChordAnalyzer.allowSevenths;
-                    sp.edit()
-                            .putBoolean("flats", cbFlat.isChecked())
-                            .putBoolean("sevenths", cbSev.isChecked())
-                            .putString("instrument", inst.getText().toString().trim())
-                            .putString("url", url.getText().toString().trim())
-                            .putString("key", key.getText().toString().trim())
-                            .putString("model", model.getText().toString().trim())
-                            .apply();
-                    loadPrefs();
-                    if (sevChanged) Toast.makeText(this,
-                            "Relance « Accords, notes et grille » pour appliquer les 7èmes", Toast.LENGTH_LONG).show();
-                    if (analysis != null && chordsShown) renderChords(); else tick();
-                })
-                .setNegativeButton("Annuler", null)
-                .show();
-    }
-
-    private EditText field(LinearLayout parent, String hint, String value) {
-        EditText e = new EditText(this);
-        e.setHint(hint);
-        e.setText(value);
-        e.setSingleLine(true);
-        parent.addView(e);
-        return e;
+        Ui.entree(carte, rang + 2);
+        animations.add(Ui.flotter(e, rang));
+        rang++;
     }
 }

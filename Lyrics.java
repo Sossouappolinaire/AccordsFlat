@@ -1,4 +1,4 @@
-package com.accords.app;
+package bj.radio;
 
 import java.util.ArrayList;
 import java.util.Collections;

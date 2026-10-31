@@ -1,4 +1,4 @@
-package com.accords.app;
+package bj.radio;
 
 import java.util.function.IntConsumer;
 import android.content.Context;
@@ -108,6 +108,89 @@ public class AudioDecoder {
         r.samples = list.toArray();
         r.sampleRate = rate;
         return r;
+    }
+
+    /** Décode un fichier audio en stéréo 44,1 kHz : retourne [gauche, droite]. */
+    public static float[][] decodeStereo44k(Context ctx, Uri uri, IntConsumer prog) throws Exception {
+        MediaExtractor ex = new MediaExtractor();
+        ex.setDataSource(ctx, uri, null);
+        int track = -1;
+        MediaFormat fmt = null;
+        for (int i = 0; i < ex.getTrackCount(); i++) {
+            MediaFormat f = ex.getTrackFormat(i);
+            String mime = f.getString(MediaFormat.KEY_MIME);
+            if (mime != null && mime.startsWith("audio/")) { track = i; fmt = f; break; }
+        }
+        if (track < 0) throw new Exception("Aucune piste audio trouvée");
+        ex.selectTrack(track);
+
+        MediaCodec codec = MediaCodec.createDecoderByType(fmt.getString(MediaFormat.KEY_MIME));
+        codec.configure(fmt, null, null, 0);
+        codec.start();
+
+        int rate = fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE);
+        int ch = Math.max(1, fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT));
+        FloatList left = new FloatList();
+        FloatList right = new FloatList();
+        long durUs = fmt.containsKey(MediaFormat.KEY_DURATION) ? fmt.getLong(MediaFormat.KEY_DURATION) : 0;
+        int lastPct = -1;
+        MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+        boolean inDone = false, outDone = false;
+
+        while (!outDone) {
+            if (!inDone) {
+                int ii = codec.dequeueInputBuffer(10000);
+                if (ii >= 0) {
+                    ByteBuffer ib = codec.getInputBuffer(ii);
+                    int sz = ex.readSampleData(ib, 0);
+                    if (sz < 0) {
+                        codec.queueInputBuffer(ii, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+                        inDone = true;
+                    } else {
+                        long st = ex.getSampleTime();
+                        codec.queueInputBuffer(ii, 0, sz, st, 0);
+                        if (prog != null && durUs > 0) {
+                            int pct = (int) Math.min(99, 100 * st / durUs);
+                            if (pct != lastPct) { lastPct = pct; prog.accept(pct); }
+                        }
+                        ex.advance();
+                    }
+                }
+            }
+            int oi = codec.dequeueOutputBuffer(info, 10000);
+            if (oi >= 0) {
+                ByteBuffer ob = codec.getOutputBuffer(oi);
+                ob.position(info.offset);
+                ob.limit(info.offset + info.size);
+                ShortBuffer sb = ob.order(ByteOrder.nativeOrder()).asShortBuffer();
+                int frames = sb.remaining() / ch;
+                for (int f = 0; f < frames; f++) {
+                    float l = 0, r = 0;
+                    for (int c = 0; c < ch; c++) {
+                        float v = sb.get() / 32768f;
+                        if (c == 0) l = v;
+                        else if (c == 1) r = v;
+                    }
+                    if (ch == 1) r = l;
+                    left.add(l);
+                    right.add(r);
+                }
+                codec.releaseOutputBuffer(oi, false);
+                if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) outDone = true;
+            } else if (oi == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                MediaFormat nf = codec.getOutputFormat();
+                rate = nf.getInteger(MediaFormat.KEY_SAMPLE_RATE);
+                ch = Math.max(1, nf.getInteger(MediaFormat.KEY_CHANNEL_COUNT));
+            }
+        }
+        codec.stop();
+        codec.release();
+        ex.release();
+
+        if (prog != null) prog.accept(100);
+        float[] l = left.toArray();
+        float[] r = right.toArray();
+        return new float[][]{resample(l, rate, 44100), resample(r, rate, 44100)};
     }
 
     /** Rééchantillonnage simple (moyenne en descente, interpolation linéaire en montée). */
