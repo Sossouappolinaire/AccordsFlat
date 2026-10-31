@@ -55,6 +55,7 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
         final String text;
         final int bars;
         boolean end; // fin d'un couplet
+        int startBar; // première mesure de la phrase dans la chanson
         Item(int kind, String text, int bars) { this.kind = kind; this.text = text; this.bars = bars; }
     }
 
@@ -73,6 +74,12 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
     private AudioTrack track;
     private short[] lastPcm;
     private final Handler h = new Handler(Looper.getMainLooper());
+    private volatile int gen = 0; // change à chaque arrêt : annule la création en cours
+    private int wordSeq = 0;
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CountDownLatch> pending =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    /** Tessiture (MIDI bas, haut) selon la voix choisie. */
+    private static final int[][] VOICE_RANGE = {{50, 62}, {62, 74}, {68, 80}, {64, 76}, {69, 81}};
 
     private int dp(int v) { return AccordsUi.dp(this, v); }
 
@@ -246,8 +253,8 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
         body.addView(cPlay, AccordsUi.lp(this, -1, -2, 16));
 
         TextView note = new TextView(this);
-        note.setText("La voix est une voix de synthèse qui récite le texte en rythme sur la musique ; "
-                + "le chœur est un « aaah » synthétique. Ce n'est pas un vrai chant.");
+        note.setText("La voix de synthèse chante le texte mot par mot sur une mélodie créée à partir des accords ; "
+                + "le chœur est un « aaah » synthétique. La création de la voix prend un peu de temps.");
         note.setTextColor(AccordsUi.MUTED);
         note.setTextSize(11);
         body.addView(note, AccordsUi.lp(this, -1, -2, 10));
@@ -374,7 +381,72 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
         if (st == TextToSpeech.SUCCESS) {
             int r = tts.setLanguage(Locale.FRENCH);
             ttsReady = r != TextToSpeech.LANG_MISSING_DATA && r != TextToSpeech.LANG_NOT_SUPPORTED;
+            tts.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
+                @Override public void onStart(String id) { }
+                @Override public void onDone(String id) { release(id); }
+                @Override public void onError(String id) { release(id); }
+                private void release(String id) {
+                    java.util.concurrent.CountDownLatch l = pending.get(id);
+                    if (l != null) l.countDown();
+                }
+            });
         }
+    }
+
+    /** Fait lire un mot à la voix de synthèse dans un fichier, et le relit. Appelé hors du fil principal. */
+    private SingVoice.Wav speakToWav(String word, float pitch) {
+        TextToSpeech t = tts;
+        if (t == null) return null;
+        String id = "w" + (wordSeq++);
+        java.io.File f = new java.io.File(getCacheDir(), id + ".wav");
+        java.util.concurrent.CountDownLatch l = new java.util.concurrent.CountDownLatch(1);
+        pending.put(id, l);
+        try {
+            t.setPitch(pitch);
+            t.setSpeechRate(0.9f);
+            if (t.synthesizeToFile(word, null, f, id) != TextToSpeech.SUCCESS) return null;
+            if (!l.await(8, java.util.concurrent.TimeUnit.SECONDS)) return null;
+            return f.length() > 100 ? SingVoice.readWav(f) : null;
+        } catch (Exception e) {
+            return null;
+        } finally {
+            pending.remove(id);
+            //noinspection ResultOfMethodCallIgnored
+            f.delete();
+        }
+    }
+
+    /** Construit la piste de voix chantée : une mélodie, un mot par note. */
+    private float[] buildVocal(SongSynth.Params p, List<Item> items, double barSec, float pitch,
+                               int voiceIdx, int myGen) {
+        float[] vocal = new float[(int) ((p.bars * barSec + 1.5) * SongSynth.SR)];
+        java.util.HashMap<String, SingVoice.Wav> cache = new java.util.HashMap<>();
+        int[] range = VOICE_RANGE[voiceIdx];
+        int done = 0, ok = 0, lineNo = 0;
+        for (Item it : items) {
+            if (it.kind != 0) continue;
+            List<SingVoice.Note> notes = SingVoice.melody(p, it.text, it.startBar * barSec, it.bars * barSec,
+                    barSec, it.startBar, range[0], range[1], 1000L + lineNo * 31L, it.end);
+            lineNo++;
+            for (SingVoice.Note n : notes) {
+                if (gen != myGen) return null;
+                String key = n.word.toLowerCase(Locale.ROOT);
+                SingVoice.Wav w = cache.get(key);
+                if (w == null && !cache.containsKey(key)) {
+                    w = speakToWav(n.word, pitch);
+                    cache.put(key, w);
+                }
+                done++;
+                if (w == null) continue;
+                float[] y = SingVoice.sing(w.pcm, w.sr, n.midi, n.dur);
+                int at = (int) (n.start * SongSynth.SR);
+                for (int i = 0; i < y.length && at + i < vocal.length; i++) vocal[at + i] += y[i] * 0.55f;
+                ok++;
+                final int d = done;
+                runOnUiThread(() -> status.setText("Création de la voix chantée… (" + d + " mots)"));
+            }
+        }
+        return ok > 0 ? vocal : null;
     }
 
     /** Découpe le texte : une ligne = une phrase ; les lignes trop longues sont coupées aux mots. */
@@ -486,6 +558,7 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
             for (int j = 0; j < it.bars; j++) p.barKind[bi + j] = it.kind;
             boolean nextDrumSolo = k + 1 < items.size() && items.get(k + 1).kind == 2;
             if (it.kind == 0 && it.end && cbFill.isChecked() && !nextDrumSolo) p.fill[bi + it.bars - 1] = true;
+            it.startBar = bi;
             bi += it.bars;
         }
         if (!(p.piano || p.bass || p.drums || p.strings) && p.women + p.men + p.children == 0) {
@@ -497,15 +570,29 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
             return;
         }
         final double barSec = p.beats * (4.0 / p.unit) * 60.0 / p.bpm;
-        final float pitch = VOICE_PITCH[spVoice.getSelectedItemPosition()];
+        final int voiceIdx = spVoice.getSelectedItemPosition();
+        final float pitch = VOICE_PITCH[voiceIdx];
 
         stopAll(null);
+        final int myGen = gen;
+        final boolean sing = ttsReady;
         bGo.setEnabled(false);
         status.setText("Création de la musique… (cela peut prendre un moment)");
         lineNow.setText("");
         new Thread(() -> {
             short[] pcm;
             try {
+                if (sing) {
+                    try {
+                        p.vocal = buildVocal(p, items, barSec, pitch, voiceIdx, myGen);
+                    } catch (Throwable e) {
+                        p.vocal = null; // pas de voix : musique seule
+                    }
+                }
+                if (gen != myGen) {
+                    runOnUiThread(() -> bGo.setEnabled(true));
+                    return;
+                }
                 pcm = SongSynth.render(p);
             } catch (Throwable e) {
                 runOnUiThread(() -> {
@@ -517,15 +604,15 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
             final short[] result = pcm;
             runOnUiThread(() -> {
                 bGo.setEnabled(true);
-                if (isFinishing()) return;
+                if (isFinishing() || gen != myGen) return;
                 lastPcm = result;
                 bSave.setEnabled(true);
-                play(result, items, barSec, pitch);
+                play(result, items, barSec, p.vocal != null);
             });
         }).start();
     }
 
-    private void play(short[] pcm, List<Item> items, double barSec, float pitch) {
+    private void play(short[] pcm, List<Item> items, double barSec, boolean sung) {
         try {
             track = new AudioTrack.Builder()
                     .setAudioAttributes(new AudioAttributes.Builder()
@@ -544,7 +631,7 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
             status.setText("Lecture impossible : " + e.getMessage());
             return;
         }
-        status.setText(ttsReady ? "En lecture…" : "En lecture (voix de synthèse française indisponible : musique seule)");
+        status.setText(sung ? "En lecture…" : "En lecture (voix de synthèse française indisponible : musique seule)");
 
         int bar = 1;
         for (Item it : items) {
@@ -555,16 +642,9 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
             h.postDelayed(() -> {
                 if (item.kind != 0) {
                     lineNow.setText(item.kind == 1 ? "♪ Solo de piano" : "♪ Solo de batterie");
-                    if (tts != null) tts.stop();
                     return;
                 }
-                lineNow.setText(item.text);
-                if (!ttsReady) return;
-                // débit calé sur la durée de la phrase
-                float rate = (float) Math.max(0.6, Math.min(1.6, item.text.length() / 13.0 / (lineSec * 0.85)));
-                tts.setPitch(pitch);
-                tts.setSpeechRate(rate);
-                tts.speak(item.text, TextToSpeech.QUEUE_FLUSH, null, "ligne");
+                lineNow.setText(item.text); // la voix est déjà dans l'audio : elle chante
             }, delay);
         }
         h.postDelayed(() -> {
@@ -574,6 +654,7 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
     }
 
     private void stopAll(String msg) {
+        gen++;
         h.removeCallbacksAndMessages(null);
         if (tts != null) tts.stop();
         if (track != null) {
@@ -594,7 +675,7 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
         Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType("audio/wav");
-        i.putExtra(Intent.EXTRA_TITLE, "ma-chanson-instrumental.wav");
+        i.putExtra(Intent.EXTRA_TITLE, "ma-chanson.wav");
         startActivityForResult(i, SAVE_WAV);
     }
 
@@ -604,7 +685,7 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
         if (req != SAVE_WAV || res != RESULT_OK || data == null || data.getData() == null || lastPcm == null) return;
         try (OutputStream os = getContentResolver().openOutputStream(data.getData())) {
             SongSynth.writeWav(os, lastPcm);
-            Toast.makeText(this, "Instrumental enregistré (sans la voix)", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Chanson enregistrée", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
             Toast.makeText(this, "Enregistrement impossible : " + e.getMessage(), Toast.LENGTH_LONG).show();
         }

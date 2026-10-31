@@ -160,6 +160,7 @@
 
         <activity
             android:name=".FilmsFacebookActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize"
             android:exported="false" />
 
         <activity

@@ -25,6 +25,17 @@ public class SongSynth {
         public int bars = 8;             // nombre total de mesures (intro + couplets + fin)
         public int[] barKind;            // par mesure : 0 chant, 1 solo de piano, 2 solo de batterie
         public boolean[] fill;           // par mesure : roulement de batterie sur la 2e moitié de la mesure
+        public float[] vocal;            // voix chantée déjà calée dans le temps (échantillons à SR Hz), ou null
+    }
+
+    /** Classes de hauteur (0-11) de l'accord joué à la mesure donnée (même logique que render). */
+    public static int[] chordPcs(Params p, int bar) {
+        boolean last = bar == p.bars - 1;
+        int[][] prog = progression(p);
+        int[] ch = last ? new int[]{0, p.minor ? 1 : 0} : prog[bar % prog.length];
+        int pc = (p.root + ch[0]) % 12;
+        int[] iv = ch[1] == 0 ? new int[]{0, 4, 7} : new int[]{0, 3, 7};
+        return new int[]{pc % 12, (pc + iv[1]) % 12, (pc + iv[2]) % 12};
     }
 
     public static int defaultBpm(String style) {
@@ -461,6 +472,10 @@ public class SongSynth {
                     }
                 }
             }
+        }
+
+        if (p.vocal != null) {
+            for (int i = 0; i < p.vocal.length && i < n; i++) mix[i] += p.vocal[i];
         }
 
         float peak = 0;

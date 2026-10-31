@@ -700,9 +700,14 @@ public class MotardCombatActivity extends Activity {
             int alpha = fantome ? 200 : 255;
             if (q.tTouche > 0 && ((int) (temps * 30f)) % 2 == 0) alpha = 120;
             int peau = avecAlpha(gorille ? 0xFF4E342E : ninja ? 0xFF212121 : fantome ? 0xFFE1F5FE : 0xFFFFCC80, alpha);
-            int tenue = avecAlpha(gorille ? 0xFF2E7D32 : ninja ? 0xFF311B92 : fantome ? 0xFF81D4FA : 0xFFC62828, alpha);
-            int pantalon = avecAlpha(ninja ? 0xFF1A1A1A : gorille ? 0xFF3E2723 : fantome ? 0xFFB3E5FC : 0xFF212121, alpha);
+            int tenue = avecAlpha(gorille ? 0xFF2E7D32 : ninja ? 0xFF4527A0 : fantome ? 0xFF81D4FA : 0xFFB71C1C, alpha);
+            int pantalon = avecAlpha(ninja ? 0xFF1A1A2E : gorille ? 0xFF33291F : fantome ? 0xFFB3E5FC : 0xFF263238, alpha);
             int ceinture = avecAlpha(coul, alpha);
+            int gant = avecAlpha(gorille ? 0xFF1B1B1B : ninja ? 0xFFB0BEC5 : fantome ? 0xFFFFFFFF : 0xFFFFD54F, alpha);
+            int botte = avecAlpha(gorille ? 0xFF1B1B1B : ninja ? 0xFF121226 : fantome ? 0xFF4FC3F7 : 0xFF263238, alpha);
+            int masque = avecAlpha(gorille ? 0xFF3E2723 : ninja ? 0xFF1A1A2E : fantome ? 0xFFB3E5FC : 0xFFF5F5F5, alpha);
+            int bandeau = avecAlpha(gorille ? 0xFF2E7D32 : ninja ? 0xFFE53935 : fantome ? 0xFF29B6F6 : 0xFFFFD54F, alpha);
+            int epaulette = avecAlpha(gorille ? 0xFF1B5E20 : ninja ? 0xFF7E57C2 : fantome ? 0xFF4FC3F7 : 0xFF8E0000, alpha);
             float ep = gorille ? 13f : 10f;
             float echelle = gorille ? 1.5f : 1.35f;
 
@@ -735,61 +740,99 @@ public class MotardCombatActivity extends Activity {
             if (air) {
                 membre(c, 0, hancheY, 14f, -38f, ep, pantalon);
                 membre(c, 14f, -38f, 4f, -22f, ep, pantalon);
+                membre(c, 4f, -24f, 10f, -18f, ep + 2f, botte);
                 membre(c, 0, hancheY, -8f, -34f, ep, pantalon);
                 membre(c, -8f, -34f, -16f, -20f, ep, pantalon);
+                membre(c, -16f, -22f, -9f, -17f, ep + 2f, botte);
             } else {
                 float prog = pied ? 1f - Math.max(0f, Math.min(1f, q.tAtt / 0.44f)) : 0f;
                 float kick = pied ? (float) Math.sin(prog * Math.PI) : 0f;          // 0 → 1 → 0
                 membre(c, 0, hancheY, -14f + pas, 0f, ep, pantalon);                   // jambe arrière
+                membre(c, -14f + pas, -6f, -6f + pas, -1f, ep + 3f, botte);
                 if (pied) {
                     membre(c, 0, hancheY, 20f + 56f * kick, hancheY + 6f - 20f * kick, ep, pantalon);
-                    p.setColor(peau);
-                    c.drawCircle(20f + 60f * kick, hancheY + 4f - 20f * kick, ep * 0.6f, p);
+                    membre(c, 14f + 56f * kick, hancheY + 5f - 20f * kick, 28f + 56f * kick, hancheY + 3f - 20f * kick, ep + 3f, botte);
+                    flamme(c, 34f + 56f * kick, hancheY + 3f - 20f * kick, coul, alpha);
                 } else {
                     membre(c, 0, hancheY, 18f - pas, 0f, ep, pantalon);
+                    membre(c, 18f - pas, -6f, 27f - pas, -1f, ep + 3f, botte);
                 }
             }
 
             // torse et ceinture
             membre(c, 0, hancheY, 3f, -112f, gorille ? 22f : 17f, tenue);
-            membre(c, -6f, hancheY + 2f, 8f, hancheY + 2f, 5f, ceinture);
+            membre(c, -6f, hancheY + 2f, 8f, hancheY + 2f, 6f, ceinture);
+            membre(c, 3f, hancheY - 4f, 3f, -104f, 4f, avecAlpha(coul, alpha));        // bande verticale du torse
+            // pan de ceinture qui flotte
+            p.setColor(ceinture);
+            chemin.reset();
+            chemin.moveTo(-4f, hancheY + 2f);
+            chemin.lineTo(-22f, hancheY + 10f + (float) Math.sin(temps * 9f) * 3f);
+            chemin.lineTo(-18f, hancheY + 18f);
+            chemin.lineTo(-2f, hancheY + 6f);
+            chemin.close();
+            c.drawPath(chemin, p);
 
             // bras
             float sx = 4f, sy = -104f;
             if (garde) {
-                membre(c, sx, sy, 26f, -96f, ep - 2f, peau);
-                membre(c, 26f, -96f, 24f, -124f, ep - 2f, peau);
-                membre(c, sx, sy + 4f, 30f, -90f, ep - 2f, peau);
-                membre(c, 30f, -90f, 28f, -118f, ep - 2f, peau);
+                membre(c, sx, sy, 26f, -96f, ep - 2f, tenue);
+                membre(c, 26f, -96f, 24f, -124f, ep - 2f, tenue);
+                membre(c, sx, sy + 4f, 30f, -90f, ep - 2f, tenue);
+                membre(c, 30f, -90f, 28f, -118f, ep - 2f, tenue);
+                p.setColor(gant);
+                c.drawCircle(24f, -126f, ep * 0.65f, p);
+                c.drawCircle(28f, -120f, ep * 0.65f, p);
             } else if (poing) {
                 float prog = 1f - Math.max(0f, Math.min(1f, q.tAtt / 0.28f));
                 float ext = (float) Math.sin(prog * Math.PI);
-                membre(c, sx, sy, 22f + 50f * ext, -102f, ep - 1f, peau);
-                p.setColor(peau);
-                c.drawCircle(26f + 50f * ext, -102f, ep * 0.7f, p);
-                membre(c, sx, sy + 4f, 22f, -88f, ep - 2f, peau);
+                membre(c, sx, sy, 22f + 50f * ext, -102f, ep - 1f, tenue);
+                p.setColor(gant);
+                c.drawCircle(26f + 50f * ext, -102f, ep * 0.8f, p);
+                flamme(c, 34f + 50f * ext, -102f, coul, alpha);
+                membre(c, sx, sy + 4f, 22f, -88f, ep - 2f, tenue);
+                p.setColor(gant);
+                c.drawCircle(22f, -88f, ep * 0.65f, p);
             } else if (spec) {
-                membre(c, sx, sy, 50f, -100f, ep - 1f, peau);
-                membre(c, sx, sy + 4f, 46f, -92f, ep - 1f, peau);
+                membre(c, sx, sy, 50f, -100f, ep - 1f, tenue);
+                membre(c, sx, sy + 4f, 46f, -92f, ep - 1f, tenue);
+                p.setColor(gant);
+                c.drawCircle(50f, -100f, ep * 0.8f, p);
+                c.drawCircle(46f, -92f, ep * 0.8f, p);
                 p.setColor(avecAlpha(coul, 170));
-                c.drawCircle(58f, -96f, 12f + (float) Math.sin(temps * 30f) * 3f, p);
+                c.drawCircle(60f, -96f, 12f + (float) Math.sin(temps * 30f) * 3f, p);
+                flamme(c, 50f, -100f, coul, alpha);
+                flamme(c, 46f, -92f, coul, alpha);
             } else {
-                membre(c, sx, sy, 22f, -92f, ep - 2f, peau);
-                membre(c, 22f, -92f, 30f, -110f, ep - 2f, peau);
-                membre(c, sx, sy + 4f, 18f, -86f, ep - 2f, peau);
-                membre(c, 18f, -86f, 26f, -102f, ep - 2f, peau);
+                membre(c, sx, sy, 22f, -92f, ep - 2f, tenue);
+                membre(c, 22f, -92f, 30f, -110f, ep - 2f, tenue);
+                membre(c, sx, sy + 4f, 18f, -86f, ep - 2f, tenue);
+                membre(c, 18f, -86f, 26f, -102f, ep - 2f, tenue);
+                p.setColor(gant);
+                c.drawCircle(31f, -112f, ep * 0.7f, p);
+                c.drawCircle(27f, -104f, ep * 0.7f, p);
             }
+
+            // épaulette
+            p.setStyle(Paint.Style.FILL);
+            p.setColor(epaulette);
+            c.drawCircle(sx, sy + 1f, gorille ? 12f : 9f, p);
 
             // tête
             p.setStyle(Paint.Style.FILL);
             p.setColor(peau);
             float rt = gorille ? 14f : 12f;
             c.drawCircle(6f, -126f, rt, p);
-            if (ninja) {                                              // masque et foulard
+            if (!gorille && !fantome) {                              // masque sur le bas du visage
+                p.setColor(masque);
+                r.set(6f - rt, -126f - rt, 6f + rt, -126f + rt);
+                c.drawArc(r, 10f, 160f, true, p);
+            }
+            if (ninja) {                                              // capuche et foulard
                 p.setColor(avecAlpha(0xFF311B92, alpha));
                 r.set(-6f, -140f, 18f, -122f);
                 c.drawArc(r, 180f, 180f, true, p);
-                p.setColor(avecAlpha(0xFFE53935, alpha));
+                p.setColor(bandeau);
                 r.set(-6f, -134f, 18f, -127f);
                 c.drawRect(r, p);
                 chemin.reset();
@@ -799,16 +842,26 @@ public class MotardCombatActivity extends Activity {
                 chemin.lineTo(-6f, -128f);
                 chemin.close();
                 c.drawPath(chemin, p);
-            } else if (roi) {                                         // couronne
-                p.setColor(avecAlpha(0xFFFFD54F, alpha));
+            } else if (roi) {                                         // bandeau doré et cheveux en pointes
+                p.setColor(avecAlpha(0xFF212121, alpha));
                 chemin.reset();
-                chemin.moveTo(-3f, -137f);
-                chemin.lineTo(-3f, -149f);
-                chemin.lineTo(2f, -142f);
-                chemin.lineTo(6f, -151f);
-                chemin.lineTo(10f, -142f);
-                chemin.lineTo(15f, -149f);
-                chemin.lineTo(15f, -137f);
+                chemin.moveTo(-5f, -132f);
+                chemin.lineTo(-8f, -146f);
+                chemin.lineTo(0f, -140f);
+                chemin.lineTo(5f, -151f);
+                chemin.lineTo(10f, -140f);
+                chemin.lineTo(18f, -146f);
+                chemin.lineTo(18f, -132f);
+                chemin.close();
+                c.drawPath(chemin, p);
+                p.setColor(bandeau);
+                r.set(-6f, -134f, 18f, -129f);
+                c.drawRect(r, p);
+                chemin.reset();
+                chemin.moveTo(-6f, -132f);
+                chemin.lineTo(-28f, -128f - (float) Math.sin(temps * 12f) * 5f);
+                chemin.lineTo(-24f, -123f);
+                chemin.lineTo(-6f, -128f);
                 chemin.close();
                 c.drawPath(chemin, p);
             } else if (gorille) {
@@ -819,14 +872,33 @@ public class MotardCombatActivity extends Activity {
                 p.setColor(avecAlpha(0xFFFFFFFF, 140));
                 c.drawCircle(6f, -128f, rt + 6f, p);
             }
-            p.setColor(avecAlpha(0xFF000000, alpha));                 // œil
-            c.drawCircle(12f, -127f, 2.2f, p);
+            // œil lumineux
+            p.setColor(avecAlpha(coul, alpha));
+            c.drawCircle(12f, -127f, 4f, p);
+            p.setColor(avecAlpha(0xFFFFFFFF, alpha));
+            c.drawCircle(12.5f, -127f, 2f, p);
             if (flash > 0) {
                 p.setColor(0x66FF1744);
                 r.set(-40f, -150f, 40f, 0f);
                 c.drawOval(r, p);
             }
             c.restore();
+        }
+
+        /** Petite flamme qui danse autour d'un poing ou d'un pied pendant une attaque. */
+        private void flamme(Canvas c, float x, float y, int couleur, int alpha) {
+            for (int k = 0; k < 3; k++) {
+                float h = 14f + 6f * (float) Math.sin(temps * 26f + k * 2.1f);
+                float dx = (k - 1) * 5f;
+                chemin.reset();
+                chemin.moveTo(x + dx - 4f, y + 3f);
+                chemin.quadTo(x + dx - 3f, y - h * 0.5f, x + dx + 1f, y - h);
+                chemin.quadTo(x + dx + 4f, y - h * 0.4f, x + dx + 4f, y + 3f);
+                chemin.close();
+                p.setStyle(Paint.Style.FILL);
+                p.setColor(avecAlpha(k == 1 ? 0xFFFFFFFF : couleur, (int) (alpha * (k == 1 ? 0.7f : 0.85f))));
+                c.drawPath(chemin, p);
+            }
         }
 
         private void dessinerBoule(Canvas c, Boule b) {

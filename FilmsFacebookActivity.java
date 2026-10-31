@@ -12,6 +12,7 @@ import android.text.InputType;
 import android.util.Base64;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
 import android.widget.EditText;
@@ -165,6 +166,10 @@ public class FilmsFacebookActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (pleinEcran) {
+            quitterPleinEcran();
+            return;
+        }
         if (vueListe != null && vueListe.getVisibility() == View.VISIBLE) {
             versChoix();
             return;
@@ -333,6 +338,7 @@ public class FilmsFacebookActivity extends Activity {
         joueur = new ExoPlayer.Builder(this).build();
         vueJoueur = new PlayerView(this);
         vueJoueur.setUseController(true);
+        brancherPleinEcran(vueJoueur);
         zone.addView(vueJoueur, new LinearLayout.LayoutParams(-1, Ui.dp(this, 220)));
         vueJoueur.setPlayer(joueur);
         final TextView etat = Ui.texte(this, "✔ Lecture depuis votre téléphone (sans internet)", 12, Ui.JAUNE, false);
@@ -358,7 +364,56 @@ public class FilmsFacebookActivity extends Activity {
     private LinearLayout zoneLecture;
     private int genLecture = 0;
 
+    // ---------- Plein écran : le lecteur passe au-dessus de toute la page, en paysage ----------
+
+    private boolean pleinEcran = false;
+    private ViewGroup parentLecteur;
+    private int rangLecteur;
+
+    private void brancherPleinEcran(final PlayerView v) {
+        v.setFullscreenButtonClickListener(plein -> {
+            if (plein) entrerPleinEcran(); else quitterPleinEcran();
+        });
+    }
+
+    private void entrerPleinEcran() {
+        if (pleinEcran || vueJoueur == null || !(vueJoueur.getParent() instanceof ViewGroup)) return;
+        parentLecteur = (ViewGroup) vueJoueur.getParent();
+        rangLecteur = parentLecteur.indexOfChild(vueJoueur);
+        parentLecteur.removeView(vueJoueur);
+        ((ViewGroup) getWindow().getDecorView()).addView(vueJoueur,
+                new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        vueJoueur.setBackgroundColor(0xFF000000);
+        pleinEcran = true;
+        setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+    }
+
+    private void quitterPleinEcran() {
+        if (!pleinEcran) return;
+        pleinEcran = false;
+        if (vueJoueur != null) {
+            ((ViewGroup) getWindow().getDecorView()).removeView(vueJoueur);
+            if (parentLecteur != null) {
+                parentLecteur.addView(vueJoueur, Math.min(rangLecteur, parentLecteur.getChildCount()),
+                        new LinearLayout.LayoutParams(-1, Ui.dp(this, 220)));
+            }
+        }
+        parentLecteur = null;
+        setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+        getWindow().getDecorView().setSystemUiVisibility(0);
+    }
+
     private void arreterLecture() {
+        if (pleinEcran) {
+            pleinEcran = false;
+            if (vueJoueur != null) ((ViewGroup) getWindow().getDecorView()).removeView(vueJoueur);
+            parentLecteur = null;
+            setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+            getWindow().getDecorView().setSystemUiVisibility(0);
+        }
         genLecture++;
         if (joueur != null) {
             try { joueur.release(); } catch (Exception ignore) { /* déjà libéré */ }
@@ -442,6 +497,7 @@ public class FilmsFacebookActivity extends Activity {
         if (vueJoueur == null) {
             vueJoueur = new PlayerView(this);
             vueJoueur.setUseController(true);
+            brancherPleinEcran(vueJoueur);
             zone.addView(vueJoueur, 0, new LinearLayout.LayoutParams(-1, Ui.dp(this, 220)));
         }
         vueJoueur.setPlayer(joueur);
