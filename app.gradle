@@ -2,15 +2,24 @@ plugins {
     id 'com.android.application'
 }
 
-// La signature est fournie par l'environnement ou par les secrets de CI,
-// jamais par des mots de passe enregistrés dans ce fichier.
-def signingStorePath = System.getenv("ANDROID_KEYSTORE_FILE")
-def signingStorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
-def signingKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
-def signingKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
-def signingConfigured = [signingStorePath, signingStorePassword, signingKeyAlias, signingKeyPassword].every {
+// Signature de l'APK. Deux modes, sans rien à configurer dans GitHub :
+//  1) si les secrets GitHub ANDROID_* existent, ils sont utilisés (variables d'environnement) ;
+//  2) sinon, on utilise le fichier sossokouame.keystore placé dans le projet (même clé à chaque build,
+//     donc chaque version remplace l'ancienne sans désinstaller).
+// Ne jamais perdre ni changer sossokouame.keystore.
+def envStore = System.getenv("ANDROID_KEYSTORE_FILE")
+def envStorePwd = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+def envAlias = System.getenv("ANDROID_KEY_ALIAS")
+def envKeyPwd = System.getenv("ANDROID_KEY_PASSWORD")
+def envConfigured = [envStore, envStorePwd, envAlias, envKeyPwd].every {
     it != null && !it.trim().isEmpty()
 }
+def localKeystore = file('sossokouame.keystore')
+def signingConfigured = envConfigured || localKeystore.exists()
+def sigFile = envConfigured ? file(envStore) : localKeystore
+def sigStorePwd = envConfigured ? envStorePwd : 'Yy8xyxKijSLTNcPt53uP'
+def sigAlias = envConfigured ? envAlias : 'sossokouame'
+def sigKeyPwd = envConfigured ? envKeyPwd : 'Yy8xyxKijSLTNcPt53uP'
 
 android {
     namespace 'bj.radio'
@@ -28,15 +37,15 @@ android {
     if (signingConfigured) {
         signingConfigs {
             sossokouame {
-                storeFile file(signingStorePath)
+                storeFile sigFile
                 storeType 'PKCS12'
-                storePassword signingStorePassword
-                keyAlias signingKeyAlias
-                keyPassword signingKeyPassword
+                storePassword sigStorePwd
+                keyAlias sigAlias
+                keyPassword sigKeyPwd
             }
         }
     } else {
-        logger.warn("Signature personnalisée non configurée : l'APK release sera non signé.")
+        logger.warn("Aucun keystore trouvé (sossokouame.keystore) : l'APK release sera non signé.")
     }
 
     buildTypes {

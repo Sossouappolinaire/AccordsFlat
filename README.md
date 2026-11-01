@@ -10,9 +10,10 @@ Tous les fichiers sont à la racine du projet (sauf `.github/workflows/build.yml
 3. Télécharge l'APK dans **Artifacts → accords-apk**.
 
 ### Signature de l'APK
-Dans **Settings → Secrets and variables → Actions**, ajoute `ANDROID_KEYSTORE_BASE64`,
-`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` et `ANDROID_KEY_PASSWORD`.
-Le keystore est décodé uniquement pendant le build et ne doit pas être commité dans le dépôt.
+Rien à configurer : le build signe avec `sossokouame.keystore` (à garder à la racine du dépôt, même clé à chaque version).
+Facultatif : si les secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` et
+`ANDROID_KEY_PASSWORD` existent dans **Settings → Secrets and variables → Actions**, ils sont utilisés à la place.
+Garde le dépôt **privé** : le keystore et son mot de passe y sont.
 
 Au premier lancement, l'appli télécharge le modèle Vosk français (≈ 40 Mo) et le garde pour un usage hors ligne.
 - Accords en notation française (Do, Ré, Mi, Fa, Sol, La, Si ; dièses ou bémols dans Réglages).
