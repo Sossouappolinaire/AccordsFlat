@@ -11,7 +11,6 @@ jobs:
           mv ./*.java app/src/main/java/bj/radio/
           mv AndroidManifest.xml app/src/main/AndroidManifest.xml
           mv app.gradle app/build.gradle
-          mv sossokouame.keystore app/sossokouame.keystore
           if [ -f ic_launcher.png ]; then
             mkdir -p app/src/main/res/mipmap-xxxhdpi app/src/main/res/mipmap-anydpi-v26 app/src/main/res/drawable-xxxhdpi app/src/main/res/values
             mv ic_launcher.png app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
@@ -19,12 +18,29 @@ jobs:
             mv ic_launcher_adaptive.xml app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
             mv ic_launcher_colors.xml app/src/main/res/values/ic_launcher_colors.xml
           fi
+          if [ -f kouame_playbox_hero.jpg ]; then
+            mkdir -p app/src/main/res/drawable-nodpi
+            mv kouame_playbox_hero.jpg app/src/main/res/drawable-nodpi/kouame_playbox_hero.jpg
+          fi
       - name: Ressources Accords & Musique
         run: |
           mkdir -p app/src/main/res/drawable app/src/main/res/values
           mv accords_logo_bg.xml app/src/main/res/drawable/accords_logo_bg.xml
           mv accords_logo_fg.xml app/src/main/res/drawable/accords_logo_fg.xml
           mv accords_values.xml app/src/main/res/values/accords_values.xml
+      - name: Préparer la signature depuis les secrets GitHub
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] \
+            || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
+            echo "::error::Configure the four Android signing values in GitHub Actions Secrets."
+            exit 1
+          fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > app/sossokouame.keystore
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -33,6 +49,11 @@ jobs:
         with:
           gradle-version: 8.7
       - run: gradle assembleRelease --stacktrace
+        env:
+          ANDROID_KEYSTORE_FILE: ${{ github.workspace }}/app/sossokouame.keystore
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
       - uses: actions/upload-artifact@v4
         with:
           name: apk
