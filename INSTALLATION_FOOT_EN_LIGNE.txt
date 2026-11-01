@@ -1,0 +1,25 @@
+MODE FOOTBALL EN LIGNE — FICHIERS À INTÉGRER
+
+FONCTIONNALITÉ
+- Football Kouamé : 1 joueur connecté contre 1 joueur connecté, 6 contre 6.
+- Foot Pro Kouamé : 1 joueur connecté contre 1 joueur connecté, 11 contre 11.
+- Chaque personne contrôle son équipe; les coéquipiers restent pilotés par l'IA.
+- Invitations depuis le menu du jeu, salon des joueurs connectés et réponses depuis les notifications.
+- Joueurs 2D redessinés dans Android Canvas : proportions, visages, ombres, crampons et pose orientée.
+- Le rendu reste une illustration 2D, pas une image photoréaliste; aucune API IA n'est requise.
+
+INSTALLATION
+1. Extraire cette archive dans la racine du projet Android en remplaçant les fichiers Java et le manifeste.
+2. Dans Supabase, exécuter une fois section16_foot_en_ligne.sql après la configuration existante et
+   section11_motard_combat.sql. Cette migration utilise les comptes, profils et la présence déjà en place.
+3. Construire et tester avec deux comptes connectés au même backend Supabase.
+4. Incrémenter le versionCode de l'application avant de publier une mise à jour.
+
+VÉRIFICATION
+La syntaxe Java a été contrôlée, mais la compilation complète et les matchs en réseau n'ont pas pu être
+exécutés dans cet environnement : Android SDK et Gradle n'y sont pas disponibles. La validation finale
+doit se faire avec le SDK Android du projet, puis avec deux comptes.
+
+SÉCURITÉ
+Le keystore n'est pas inclus dans l'archive. Les paramètres de signature sont lus depuis les secrets
+GitHub Actions décrits dans README.md; ne commite jamais le keystore ni les valeurs de signature.

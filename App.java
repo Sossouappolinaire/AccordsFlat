@@ -23,10 +23,14 @@ public class App extends Application {
         }
     };
 
-    /** Motard Combat : toutes les 8 s (appli visible), on regarde si quelqu'un m'invite à jouer. */
+    /** Jeux en ligne : vérifie les invitations toutes les 8 s tant que l'appli est visible. */
     private final Runnable invitations = new Runnable() {
         @Override public void run() {
-            if (Compte.connecte()) new Thread(() -> MotardReseau.verifierInvitations(getApplicationContext())).start();
+            if (Compte.connecte()) new Thread(() -> {
+                Context app = getApplicationContext();
+                MotardReseau.verifierInvitations(app);
+                FootReseau.verifierInvitations(app);
+            }).start();
             pouls.postDelayed(this, 8_000);
         }
     };

@@ -27,6 +27,7 @@ import android.util.Base64;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewParent;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
@@ -38,6 +39,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.MediaController;
@@ -261,6 +263,12 @@ public class FacebookActivity extends Activity {
     private volatile boolean enCours = false;
     private volatile String etape = "";
     private VideoView apercu;
+    private FrameLayout cadreApercu;
+    private TextView boutonPleinApercu;
+    private ViewGroup parentApercu;
+    private ViewGroup.LayoutParams paramsApercu;
+    private int indexApercu;
+    private boolean apercuPleinEcran;
     private String dernierLien = "";
     private volatile boolean webEssaye = false;   // la lecture via la page Facebook a déjà été tentée
     private String categorie = null;     // serie, film ou chanson (choix obligatoire)
@@ -304,6 +312,10 @@ public class FacebookActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (apercuPleinEcran) {
+            quitterPleinApercu();
+            return;
+        }
         if (panneauWeb.getVisibility() == View.VISIBLE) {
             annulerWeb();
             return;
@@ -321,6 +333,12 @@ public class FacebookActivity extends Activity {
             return;
         }
         super.onBackPressed();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean focus) {
+        super.onWindowFocusChanged(focus);
+        if (focus && apercuPleinEcran) Ui.rappelerPleinEcran(this, true, C_BG);
     }
 
     /**
@@ -1165,6 +1183,7 @@ public class FacebookActivity extends Activity {
     }
 
     private void arreterApercu() {
+        if (apercuPleinEcran) quitterPleinApercu();
         if (apercu != null) {
             try {
                 apercu.stopPlayback();
@@ -1173,6 +1192,8 @@ public class FacebookActivity extends Activity {
             }
             apercu = null;
         }
+        cadreApercu = null;
+        boutonPleinApercu = null;
     }
 
     /** Image de la vidéo (celle de la page Facebook), affichée au-dessus de l'aperçu ; sert aussi de miniature partagée. */
@@ -1255,7 +1276,23 @@ public class FacebookActivity extends Activity {
             if (!enCours) basculerWeb("Le lien direct n'est pas lisible, lecture via la page Facebook…");
             return true;
         });
-        resultats.addView(vv, lp(-1, dp(220), 0, 0, 0, 12));
+        FrameLayout cadre = new FrameLayout(this);
+        cadreApercu = cadre;
+        cadre.setBackgroundColor(Color.BLACK);
+        cadre.addView(vv, new FrameLayout.LayoutParams(-1, -1));
+
+        TextView plein = texte("⛶", 20, true);
+        boutonPleinApercu = plein;
+        plein.setTextColor(Color.WHITE);
+        plein.setGravity(Gravity.CENTER);
+        plein.setBackground(rond(0xCC101820, 12, 0, 0));
+        plein.setContentDescription("Plein écran");
+        plein.setOnClickListener(v -> basculerPleinApercu());
+        FrameLayout.LayoutParams lpPlein = new FrameLayout.LayoutParams(dp(48), dp(48),
+                Gravity.TOP | Gravity.END);
+        lpPlein.setMargins(0, dp(8), dp(8), 0);
+        cadre.addView(plein, lpPlein);
+        resultats.addView(cadre, lp(-1, dp(220), 0, 0, 0, 12));
         Map<String, String> entetes = new HashMap<>();
         entetes.put("User-Agent", ua == null ? UA_PC : ua);
         entetes.put("Referer", "https://www.facebook.com/");
@@ -1264,6 +1301,50 @@ public class FacebookActivity extends Activity {
         } catch (Exception e) {
             etat.setText("⚠ Aperçu impossible.");
         }
+    }
+
+    private void basculerPleinApercu() {
+        if (apercuPleinEcran) {
+            quitterPleinApercu();
+            return;
+        }
+        if (cadreApercu == null || !(cadreApercu.getParent() instanceof ViewGroup)) return;
+        parentApercu = (ViewGroup) cadreApercu.getParent();
+        indexApercu = parentApercu.indexOfChild(cadreApercu);
+        paramsApercu = cadreApercu.getLayoutParams();
+        parentApercu.removeView(cadreApercu);
+        ((ViewGroup) getWindow().getDecorView()).addView(cadreApercu,
+                new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT));
+        apercuPleinEcran = true;
+        cadreApercu.setElevation(dp(24));
+        if (boutonPleinApercu != null) {
+            boutonPleinApercu.setText("⤢");
+            boutonPleinApercu.setContentDescription("Quitter le plein écran");
+        }
+        Ui.modePleinEcran(this, true, C_BG);
+    }
+
+    private void quitterPleinApercu() {
+        if (!apercuPleinEcran) return;
+        apercuPleinEcran = false;
+        if (cadreApercu != null) {
+            ViewParent parent = cadreApercu.getParent();
+            if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(cadreApercu);
+            if (parentApercu != null) {
+                parentApercu.addView(cadreApercu,
+                        Math.min(indexApercu, parentApercu.getChildCount()), paramsApercu);
+            }
+            cadreApercu.setElevation(0f);
+        }
+        parentApercu = null;
+        paramsApercu = null;
+        if (boutonPleinApercu != null) {
+            boutonPleinApercu.setText("⛶");
+            boutonPleinApercu.setContentDescription("Plein écran");
+        }
+        Ui.modePleinEcran(this, false, C_BG);
+        getWindow().setStatusBarColor(C_HAUT);
     }
 
     /** Dernier recours : ouvrir la page dans une WebView et récupérer les vrais liens que Facebook sert. */

@@ -16,12 +16,12 @@ import org.json.JSONObject;
 
 import java.util.HashMap;
 
-/** Menu « JEUX » : Panda Dash, Super Kouamé (style Mario), Serpent, Commando Kouamé (tir et action), Liquide (tri de couleurs) et Combat Mortel (robot ou joueur en ligne). Les records sont gardés sur le téléphone. */
+/** Menu « JEUX » : Panda Dash, Super Kouamé (style Mario), Serpent, Commando Kouamé (tir et action), Liquide (tri de couleurs), Combat Mortel (robot ou joueur en ligne), Football Kouamé (arcade) et Foot Pro Kouamé (simulation). Les records sont gardés sur le téléphone. */
 public class JeuxActivity extends Activity {
 
     private static final String PREFS = "jeux";
 
-    private static final String[] JEUX = {"panda", "mario", "serpent", "commando", "liquide", "motard"};
+    private static final String[] JEUX = {"panda", "mario", "serpent", "commando", "liquide", "motard", "foot", "pes"};
 
     /** Par jeu : [0] mon record, [1] meilleur joueur de tous les joueurs. */
     private final HashMap<String, TextView[]> champs = new HashMap<>();
@@ -80,6 +80,16 @@ public class JeuxActivity extends Activity {
                 "Jeu de combat : poings, pieds, garde et attaque spéciale. Affronte le robot (10 niveaux, très fort) ou invite un joueur en ligne.",
                 0xFFB71C1C, 0xFF7B4DFF,
                 new Intent(this, JeuMotardActivity.class));
+
+        carte(root, "foot", "⚽", "Football Kouamé",
+                "Football arcade 6 contre 6 en caméra TV : dribble, passes, tirs puissants, tacles et glissades. Choisis ton équipe et le niveau.",
+                0xFF1B8E3E, 0xFF0D47A1,
+                new Intent(this, JeuFootActivity.class).putExtra("mode", "foot"));
+
+        carte(root, "pes", "🏟️", "Foot Pro Kouamé",
+                "Football de simulation 11 contre 11 : jeu posé, fatigue, passes en profondeur, gardiens et matchs plus longs, dans le style des grands jeux de foot.",
+                0xFF0B3D91, 0xFF00897B,
+                new Intent(this, JeuFootActivity.class).putExtra("mode", "pes"));
 
         ScrollView sv = new ScrollView(this);
         sv.setFillViewport(true);

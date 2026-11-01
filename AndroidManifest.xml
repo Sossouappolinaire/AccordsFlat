@@ -199,6 +199,17 @@
             android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize" />
 
         <activity
+            android:name=".JeuFootActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize" />
+
+        <activity
+            android:name=".FootEnLigneActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
             android:name=".JeuLiquideActivity"
             android:exported="false"
             android:screenOrientation="portrait" />
@@ -238,6 +249,18 @@
             android:name=".StemActivity"
             android:exported="false"
             android:theme="@style/AccordsTheme" />
+
+        <!-- Module scolaire : exposés et exercices liés à Supabase -->
+        <activity
+            android:name=".ScolaireActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ExposeActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ExercicesActivity"
+            android:exported="false" />
 
     </application>
 </manifest>

@@ -956,12 +956,13 @@ public class LecteurVideoActivity extends Activity {
         int p = plein ? 0 : Ui.dp(this, 14);
         root.setPadding(p, p, p, p);
         overlay.setTextSize(plein ? 20 : 16);
-        setRequestedOrientation(plein ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                                      : ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
-        getWindow().getDecorView().setSystemUiVisibility(plein
-                ? View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                  | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                : 0);
+        Ui.modePleinEcran(this, plein);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean focus) {
+        super.onWindowFocusChanged(focus);
+        if (focus && plein) Ui.rappelerPleinEcran(this, true);
     }
 
     @Override

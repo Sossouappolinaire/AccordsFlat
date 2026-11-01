@@ -178,6 +178,12 @@ public class FilmsFacebookActivity extends Activity {
     }
 
     @Override
+    public void onWindowFocusChanged(boolean focus) {
+        super.onWindowFocusChanged(focus);
+        if (focus && pleinEcran) Ui.rappelerPleinEcran(this, true);
+    }
+
+    @Override
     protected void onPause() {
         if (joueur != null) joueur.pause();
         super.onPause();
@@ -387,19 +393,7 @@ public class FilmsFacebookActivity extends Activity {
         pleinEcran = true;
         vueJoueur.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM);
         getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0xFF000000));
-        getWindow().setStatusBarColor(0xFF000000);
-        getWindow().setNavigationBarColor(0xFF000000);
-        // plein écran : suit la rotation du téléphone (vertical ou horizontal), sous l'encoche aussi
-        setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR);
-        if (android.os.Build.VERSION.SDK_INT >= 28) {
-            getWindow().getAttributes().layoutInDisplayCutoutMode =
-                    android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-            getWindow().setAttributes(getWindow().getAttributes());
-        }
-        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN
-                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+        Ui.modePleinEcran(this, true);
     }
 
     private void quitterPleinEcran() {
@@ -415,15 +409,7 @@ public class FilmsFacebookActivity extends Activity {
         parentLecteur = null;
         if (vueJoueur != null) vueJoueur.setResizeMode(androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);
         getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Ui.BG));
-        getWindow().setStatusBarColor(Ui.BG);
-        getWindow().setNavigationBarColor(Ui.BG);
-        setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
-        if (android.os.Build.VERSION.SDK_INT >= 28) {
-            getWindow().getAttributes().layoutInDisplayCutoutMode =
-                    android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
-            getWindow().setAttributes(getWindow().getAttributes());
-        }
-        getWindow().getDecorView().setSystemUiVisibility(0);
+        Ui.modePleinEcran(this, false);
     }
 
     private void arreterLecture() {
@@ -432,15 +418,7 @@ public class FilmsFacebookActivity extends Activity {
             if (vueJoueur != null) ((ViewGroup) getWindow().getDecorView()).removeView(vueJoueur);
             parentLecteur = null;
             getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Ui.BG));
-            getWindow().setStatusBarColor(Ui.BG);
-            getWindow().setNavigationBarColor(Ui.BG);
-            setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
-            if (android.os.Build.VERSION.SDK_INT >= 28) {
-                getWindow().getAttributes().layoutInDisplayCutoutMode =
-                        android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
-                getWindow().setAttributes(getWindow().getAttributes());
-            }
-            getWindow().getDecorView().setSystemUiVisibility(0);
+            Ui.modePleinEcran(this, false);
         }
         genLecture++;
         if (joueur != null) {

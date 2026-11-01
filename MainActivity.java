@@ -5,11 +5,14 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.LinearLayout;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -19,15 +22,14 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 public class MainActivity extends Activity {
 
     private LinearLayout mosaique;
-    private LinearLayout ligne;
     private TextView bandeauMaj;
-    private int rang = 0;
     /** Une tuile de l'accueil (réglages d'origine, modifiables par le fichier de configuration de la base). */
     private static final class T {
         String id, emoji, titre, desc, action = "";
@@ -58,26 +60,53 @@ public class MainActivity extends Activity {
         }
         ProgrammeAlarme.planifier(this);
 
-        int p = Ui.dp(this, 14);
+        int p = Ui.dp(this, 18);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(p, p * 2, p, p);
+        root.setPadding(p, Ui.dp(this, 20), p, Ui.dp(this, 24));
 
         final JSONObject cfg = Config.contenu(this);
         String titreApp = Config.titreApp(this);
-        TextView titre = Ui.texte(this, titreApp, 34, Ui.JAUNE, true);
-        titre.setGravity(Gravity.CENTER);
-        root.addView(titre);
-        animations.add(Ui.titreColore(titre));
-        Ui.entree(titre, 0);
-
         String nom = Compte.nom();
-        String sousDefaut = cfg != null && !cfg.optString("sous_titre", "").trim().isEmpty() ? cfg.optString("sous_titre").trim() : "Radio, TV & vidéos";
-        TextView sous = Ui.texte(this, nom.isEmpty() ? sousDefaut : "Bonjour " + nom + " 👋", 16, Ui.TXT2, false);
-        sous.setGravity(Gravity.CENTER);
-        root.addView(sous, Ui.lp(this, -1, -2, 0f, 4, 0));
-        Ui.entree(sous, 1);
+        String sousDefaut = cfg != null && !cfg.optString("sous_titre", "").trim().isEmpty()
+                ? cfg.optString("sous_titre").trim() : "Médias, jeux et création";
+
+        FrameLayout entete = new FrameLayout(this);
+        entete.setBackground(Ui.rond(0xFF172438, 22, this));
+        entete.setClipToOutline(true);
+
+        ImageView imageEntete = new ImageView(this);
+        imageEntete.setImageResource(R.drawable.kouame_playbox_hero);
+        imageEntete.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        entete.addView(imageEntete, new FrameLayout.LayoutParams(-1, -1));
+
+        View voile = new View(this);
+        voile.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{0xF20B121B, 0xC90B121B, 0x33101B29}));
+        entete.addView(voile, new FrameLayout.LayoutParams(-1, -1));
+
+        LinearLayout contenuEntete = new LinearLayout(this);
+        contenuEntete.setOrientation(LinearLayout.VERTICAL);
+        contenuEntete.setGravity(Gravity.CENTER_VERTICAL);
+        contenuEntete.setPadding(Ui.dp(this, 18), Ui.dp(this, 17), Ui.dp(this, 18), Ui.dp(this, 18));
+        entete.addView(contenuEntete, new FrameLayout.LayoutParams(-1, -1));
+
+        TextView surTitre = Ui.texte(this, "KOUAMÉ PLAY BOX  ·  VOTRE ESPACE", 11, 0xFF9FE2C7, true);
+        contenuEntete.addView(surTitre);
+
+        TextView titre = Ui.texte(this, titreApp, 28, Ui.TXT, true);
+        titre.setMaxLines(1);
+        titre.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        contenuEntete.addView(titre, Ui.lp(this, -1, -2, 0f, 5, 0));
+        animations.add(Ui.titreColore(titre));
+
+        TextView sous = Ui.texte(this, nom.isEmpty() ? sousDefaut : "Bonjour " + nom + " 👋",
+                14, Ui.TXT2, false);
+        sous.setMaxLines(2);
+        contenuEntete.addView(sous, Ui.lp(this, -1, -2, 0f, 5, 0));
+        root.addView(entete, Ui.lp(this, -1, Ui.dp(this, 208), 0f, 0, 0));
+        Ui.entree(entete, 0);
 
         String bandeau = cfg == null ? "" : cfg.optString("bandeau", "").trim();
         if (!bandeau.isEmpty()) {
@@ -102,17 +131,21 @@ public class MainActivity extends Activity {
 
         mosaique = new LinearLayout(this);
         mosaique.setOrientation(LinearLayout.VERTICAL);
-        root.addView(mosaique, Ui.lp(this, -1, -2, 0f, 20, 0));
+        TextView explorer = Ui.texte(this, "Explorer", 21, Ui.TXT, true);
+        root.addView(explorer, Ui.lp(this, -1, -2, 0f, 19, 0));
+        root.addView(mosaique, Ui.lp(this, -1, -2, 0f, 0, 0));
 
         List<T> liste = new ArrayList<>();
         def(liste, "radio", "📻", "Radio", "Radios par pays et par ville", Ui.ACCENT, 0xFFFF3D6E, RadioActivity.class);
         def(liste, "tv", "📺", "Télévision", "Chaînes du monde, en plein écran", Ui.VIOLET, 0xFF3A7BFF, TvActivity.class);
         def(liste, "tvkouame", "📡", "TV Kouamé", "Programme du jour, nouveau chaque jour à 00h00", 0xFFE91E63, 0xFFFF9800, TvKouameActivity.class);
-        def(liste, "jeux", "🎮", "JEUX", "Panda Dash, Super Kouamé, Serpent, Commando, Liquide et Combat Mortel", 0xFF8E24AA, 0xFFFF5252, JeuxActivity.class);
-        def(liste, "facebook", "📘", "Télécharger Facebook", "Une vidéo Facebook, en qualité standard ou HD", 0xFF1877F2, 0xFF5B3DF5, FacebookActivity.class);
+        def(liste, "videos", "🎬", "Vidéos de ma galerie", "Retrouver et lire les vidéos du téléphone", Ui.BLEU, Ui.VERT, VideosActivity.class);
         def(liste, "films", "🎞", "Films partagés", "Les films ajoutés par les utilisateurs", 0xFF0E5FCB, 0xFF12B5CB, FilmsFacebookActivity.class);
-        def(liste, "telechargements", "📥", "Téléchargements", "Facebook, galerie et liens, classés à part", 0xFF2E9E73, 0xFF9BCB3C, HorsLigneActivity.class);
+        def(liste, "jeux", "🎮", "JEUX", "Panda Dash, Super Kouamé, Serpent, Commando, Liquide et Combat Mortel", 0xFF8E24AA, 0xFFFF5252, JeuxActivity.class);
         def(liste, "accords", "🎼", "Accords & Musique", "Analyser un morceau, créer une chanson, séparer les voix", 0xFF6D4AFF, 0xFFC13FD6, AccordsHomeActivity.class);
+        def(liste, "scolaire", "📚", "Exposés & exercices", "Préparer un exposé et réviser les matières scolaires", 0xFF167D8D, 0xFF36B37E, ScolaireActivity.class);
+        def(liste, "facebook", "📘", "Télécharger Facebook", "Une vidéo Facebook, en qualité standard ou HD", 0xFF1877F2, 0xFF5B3DF5, FacebookActivity.class);
+        def(liste, "telechargements", "📥", "Téléchargements", "Facebook, galerie et liens, classés à part", 0xFF2E9E73, 0xFF9BCB3C, HorsLigneActivity.class);
         def(liste, "compilateur", "🛠", "Compiler un projet", "Zip Android → APK à télécharger", 0xFF16A085, 0xFF2D8CFF, CompilateurActivity.class);
         def(liste, "analyse", "🛡", "Analyse du téléphone", "Fichiers malveillants et cachés", 0xFFC0392B, 0xFFE67E22, AnalyseActivity.class);
         def(liste, "sms", "💬", "Messages SMS", "Lire vos SMS reçus et envoyés", 0xFF2980B9, 0xFF8E44AD, SmsActivity.class);
@@ -120,7 +153,7 @@ public class MainActivity extends Activity {
         def(liste, "parametres", "⚙", "Paramètres", "Compte, code PIN et empreinte digitale", 0xFF6C7A89, 0xFF34495E, ParametresActivity.class);
 
         liste = appliquerConfig(liste, cfg);
-        for (T t : liste) if (t.visible) tuile(t);
+        afficherGroupes(liste);
 
         ScrollView sv = new ScrollView(this);
         sv.setFillViewport(true);
@@ -273,52 +306,120 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 
-    /**
-     * Une tuile de la mosaïque : dégradé de deux couleurs, grande icône qui flotte, titre, description.
-     * Les rangées alternent leurs largeurs (1 / 1,35 puis 1,35 / 1) pour casser la grille régulière.
-     */
-    private void tuile(final T t) {
-        if (rang % 2 == 0) {
-            ligne = new LinearLayout(this);
-            ligne.setOrientation(LinearLayout.HORIZONTAL);
-            mosaique.addView(ligne, Ui.lp(this, -1, -2, 0f, 0, 0));
+    private void afficherGroupes(List<T> liste) {
+        LinkedHashMap<String, List<T>> groupes = new LinkedHashMap<>();
+        for (T t : liste) {
+            if (!t.visible) continue;
+            String groupe;
+            switch (t.id) {
+                case "radio":
+                case "tv":
+                case "tvkouame":
+                case "films":
+                case "videos":
+                    groupe = "REGARDER";
+                    break;
+                case "jeux":
+                    groupe = "JOUER";
+                    break;
+                case "accords":
+                case "scolaire":
+                    groupe = "CRÉER & APPRENDRE";
+                    break;
+                case "facebook":
+                case "telechargements":
+                    groupe = "TÉLÉCHARGER & FICHIERS";
+                    break;
+                case "compilateur":
+                case "analyse":
+                case "sms":
+                case "admin":
+                case "parametres":
+                    groupe = "OUTILS";
+                    break;
+                default:
+                    groupe = "AUTRES";
+                    break;
+            }
+            List<T> items = groupes.get(groupe);
+            if (items == null) {
+                items = new ArrayList<>();
+                groupes.put(groupe, items);
+            }
+            items.add(t);
         }
-        int rangee = rang / 2;
-        boolean gauche = rang % 2 == 0;
-        float poids = (rangee % 2 == 0) == gauche ? 1f : 1.35f;
-        int hauteur = rangee % 2 == 0 ? 150 : 162;
 
+        int largeur = getResources().getConfiguration().screenWidthDp;
+        int colonnes = largeur >= 600 ? 3 : largeur < 360 ? 1 : 2;
+        int indexAnimation = 1;
+        for (Map.Entry<String, List<T>> entree : groupes.entrySet()) {
+            List<T> items = entree.getValue();
+            if (items.isEmpty()) continue;
+
+            LinearLayout titreGroupe = new LinearLayout(this);
+            titreGroupe.setGravity(Gravity.CENTER_VERTICAL);
+            View accent = new View(this);
+            accent.setBackground(Ui.rond(Ui.JAUNE, 3, this));
+            titreGroupe.addView(accent, new LinearLayout.LayoutParams(Ui.dp(this, 4), Ui.dp(this, 20)));
+            TextView nomGroupe = Ui.texte(this, entree.getKey(), 14, Ui.TXT, true);
+            nomGroupe.setLetterSpacing(0.04f);
+            titreGroupe.addView(nomGroupe, Ui.lp(this, 0, -2, 1f, 0, 9));
+            TextView nombre = Ui.texte(this, items.size() + (items.size() == 1 ? " option" : " options"),
+                    11, Ui.TXT2, false);
+            titreGroupe.addView(nombre);
+            mosaique.addView(titreGroupe, Ui.lp(this, -1, -2, 0f, 16, 0));
+
+            for (int debut = 0; debut < items.size(); debut += colonnes) {
+                int dansLigne = Math.min(colonnes, items.size() - debut);
+                LinearLayout rangee = new LinearLayout(this);
+                rangee.setOrientation(LinearLayout.HORIZONTAL);
+                mosaique.addView(rangee, Ui.lp(this, -1, -2, 0f, 3, 0));
+                for (int j = 0; j < dansLigne; j++) {
+                    T t = items.get(debut + j);
+                    View carte = tuile(t, indexAnimation++);
+                    int marge = Ui.dp(this, 5);
+                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                            dansLigne == 1 ? -1 : 0, Ui.dp(this, colonnes == 1 ? 132 : 164),
+                            dansLigne == 1 ? 0f : 1f);
+                    lp.setMargins(marge, marge, marge, marge);
+                    rangee.addView(carte, lp);
+                }
+            }
+        }
+    }
+
+    /** Tuile lisible et tactile, avec une couleur d'accent propre à chaque destination. */
+    private View tuile(final T t, int index) {
         LinearLayout carte = new LinearLayout(this);
         carte.setOrientation(LinearLayout.VERTICAL);
-        carte.setGravity(Gravity.CENTER);
-        carte.setBackground(Ui.onde(t.c1, t.c2, 22, this));
-        carte.setElevation(Ui.dp(this, 4));
-        int q = Ui.dp(this, 10);
+        carte.setGravity(Gravity.CENTER_VERTICAL);
+        carte.setBackground(Ui.onde(Ui.assombrir(t.c1, 0.43f), Ui.assombrir(t.c2, 0.43f), 20, this));
+        carte.setElevation(Ui.dp(this, 2));
+        int q = Ui.dp(this, 14);
         carte.setPadding(q, q, q, q);
         carte.setClickable(true);
+        carte.setFocusable(true);
+        carte.setMinimumHeight(Ui.dp(this, 120));
+        carte.setContentDescription(t.titre + ". " + t.desc + ". Ouvrir.");
         carte.setOnClickListener(v -> ouvrir(t));
         Ui.pression(carte);
 
-        TextView e = Ui.texte(this, t.emoji, 40, Ui.TXT, false);
-        e.setGravity(Gravity.CENTER);
+        TextView e = Ui.texte(this, t.emoji, 31, Ui.TXT, false);
         carte.addView(e);
 
-        TextView ti = Ui.texte(this, t.titre, 16, Ui.TXT, true);
-        ti.setGravity(Gravity.CENTER);
-        carte.addView(ti, Ui.lp(this, -1, -2, 0f, 6, 0));
+        TextView ti = Ui.texte(this, t.titre, 15, Ui.TXT, true);
+        ti.setMaxLines(2);
+        ti.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        carte.addView(ti, Ui.lp(this, -1, -2, 0f, 4, 0));
 
-        TextView d = Ui.texte(this, t.desc, 11, 0xDDFFFFFF, false);
-        d.setGravity(Gravity.CENTER);
-        d.setMaxLines(3);
+        TextView d = Ui.texte(this, t.desc, 11, 0xFFD8E0E7, false);
+        d.setMaxLines(2);
+        d.setEllipsize(android.text.TextUtils.TruncateAt.END);
         carte.addView(d, Ui.lp(this, -1, -2, 0f, 3, 0));
 
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, Ui.dp(this, hauteur), poids);
-        int m = Ui.dp(this, 6);
-        lp.setMargins(m, m, m, m);
-        ligne.addView(carte, lp);
-
-        Ui.entree(carte, rang + 2);
-        animations.add(Ui.flotter(e, rang));
-        rang++;
+        TextView action = Ui.texte(this, "OUVRIR  →", 10, Ui.eclaircir(t.c1, 0.22f), true);
+        carte.addView(action, Ui.lp(this, -1, -2, 0f, 7, 0));
+        Ui.entree(carte, index);
+        return carte;
     }
 }
