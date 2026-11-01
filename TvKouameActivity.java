@@ -581,24 +581,7 @@ public class TvKouameActivity extends Activity {
                 : androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);
         getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(
                 pleinEcran ? Color.BLACK : Ui.BG));
-        getWindow().setStatusBarColor(pleinEcran ? Color.BLACK : Ui.BG);
-        getWindow().setNavigationBarColor(pleinEcran ? Color.BLACK : Ui.BG);
-        // plein écran : l'écran suit la rotation du téléphone, en vertical comme en horizontal
-        setRequestedOrientation(pleinEcran ? ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
-                : ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
-        // l'image passe aussi sous l'encoche / la caméra frontale
-        if (android.os.Build.VERSION.SDK_INT >= 28) {
-            getWindow().getAttributes().layoutInDisplayCutoutMode = pleinEcran
-                    ? WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-                    : WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
-            getWindow().setAttributes(getWindow().getAttributes());
-        }
-        // barres du système masquées (vrai plein écran) ; un glissement depuis le bord les fait réapparaître un instant
-        getWindow().getDecorView().setSystemUiVisibility(pleinEcran
-                ? View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                  | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                  | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                : 0);
+        Ui.modePleinEcran(this, pleinEcran);
         plein.setText(pleinEcran ? "⛶ Quitter le plein écran" : "⛶ Plein écran");
     }
 
@@ -606,11 +589,6 @@ public class TvKouameActivity extends Activity {
     public void onWindowFocusChanged(boolean focus) {
         super.onWindowFocusChanged(focus);
         // les barres reviennent parfois (notification, volume) : on les recache
-        if (focus && pleinEcran) {
-            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN
-                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                    | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
-        }
+        if (focus && pleinEcran) Ui.rappelerPleinEcran(this, true);
     }
 }

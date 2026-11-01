@@ -7,6 +7,7 @@ import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.content.Context;
 import android.content.res.ColorStateList;
+import android.content.pm.ActivityInfo;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
 import android.graphics.Matrix;
@@ -14,9 +15,11 @@ import android.graphics.Shader;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
+import android.os.Build;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.view.animation.AccelerateDecelerateInterpolator;
 import android.view.animation.LinearInterpolator;
 import android.view.animation.OvershootInterpolator;
@@ -32,14 +35,16 @@ import org.json.JSONObject;
 
 import java.util.List;
 
-/** Petits outils de style partagés : thème gris cendre « Kouamé Play Box » (dégradés, boutons, animations). */
+/** Outils de style partagés : thème bleu nuit, vert terrain et accents chauds. */
 public class Ui {
-    // Couleurs du thème : valeurs d'origine ci-dessous, modifiables à distance par la clé "theme" du fichier de configuration
+    // Palette par défaut, modifiable à distance par la clé "theme" du fichier de configuration
     // (voir Ui.theme). Elles ne sont plus « final » pour pouvoir changer sans recompiler.
-    static final int D_BG = 0xFF5C6068, D_BG_HAUT = 0xFF6A6E77, D_CARD = 0xFF474B53, D_ACCENT = 0xFFFF6B35, D_VIOLET = 0xFF7B4DFF,
-            D_JAUNE = 0xFFFFC857, D_TXT = 0xFFFFFFFF, D_TXT2 = 0xFFE3E5EA, D_ROSE = 0xFFFF4D8D, D_VERT = 0xFF2E9E73, D_BLEU = 0xFF1877F2;
-    static int BG = D_BG;               // fond gris cendre (bas du dégradé)
-    static int BG_HAUT = D_BG_HAUT;     // haut du dégradé de l'accueil
+    static final int D_BG = 0xFF0B121B, D_BG_HAUT = 0xFF142332, D_CARD = 0xFF1C2B3A,
+            D_ACCENT = 0xFFFF9E47, D_VIOLET = 0xFF8369F7, D_JAUNE = 0xFFFFD166,
+            D_TXT = 0xFFF5F7FA, D_TXT2 = 0xFFB6C2CF, D_ROSE = 0xFFFF6482,
+            D_VERT = 0xFF28B587, D_BLEU = 0xFF4C8DFF;
+    static int BG = D_BG;               // fond bleu nuit (bas du dégradé)
+    static int BG_HAUT = D_BG_HAUT;     // haut du dégradé sombre
     static int CARD = D_CARD;
     static int ACCENT = D_ACCENT;
     static int VIOLET = D_VIOLET;
@@ -93,6 +98,52 @@ public class Ui {
     static void fenetre(Activity a) {
         a.getWindow().setStatusBarColor(BG);
         a.getWindow().setNavigationBarColor(BG);
+        int flags = a.getWindow().getDecorView().getSystemUiVisibility()
+                & ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+        if (Build.VERSION.SDK_INT >= 26) flags &= ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+        a.getWindow().getDecorView().setSystemUiVisibility(flags);
+    }
+
+    private static final int IMMERSIF = View.SYSTEM_UI_FLAG_FULLSCREEN
+            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+
+    /** Même comportement immersif pour les lecteurs : masquage sticky, gestes système temporaires et encoche. */
+    static void modePleinEcran(Activity a, boolean actif) {
+        modePleinEcran(a, actif, BG);
+    }
+
+    static void modePleinEcran(Activity a, boolean actif, int couleurPage) {
+        appliquerBarresPleinEcran(a, actif, couleurPage);
+        a.setRequestedOrientation(actif
+                ? ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+                : ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+    }
+
+    /** Réapplique uniquement les barres après une notification, un réglage de volume ou un retour de focus. */
+    static void rappelerPleinEcran(Activity a, boolean actif) {
+        rappelerPleinEcran(a, actif, BG);
+    }
+
+    static void rappelerPleinEcran(Activity a, boolean actif, int couleurPage) {
+        if (actif) appliquerBarresPleinEcran(a, true, couleurPage);
+    }
+
+    private static void appliquerBarresPleinEcran(Activity a, boolean actif, int couleurPage) {
+        android.view.Window window = a.getWindow();
+        window.setStatusBarColor(actif ? Color.BLACK : couleurPage);
+        window.setNavigationBarColor(actif ? Color.BLACK : couleurPage);
+        if (Build.VERSION.SDK_INT >= 28) {
+            WindowManager.LayoutParams attrs = window.getAttributes();
+            attrs.layoutInDisplayCutoutMode = actif
+                    ? WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                    : WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
+            window.setAttributes(attrs);
+        }
+        window.getDecorView().setSystemUiVisibility(actif ? IMMERSIF : 0);
     }
 
     static LinearLayout.LayoutParams lp(Context c, int w, int h, float poids, int hautDp, int gaucheDp) {
@@ -129,7 +180,7 @@ public class Ui {
                 (int) (Color.green(c) * (1 - f)), (int) (Color.blue(c) * (1 - f)));
     }
 
-    /** Fond de page : dégradé du gris clair (haut) vers le gris cendre (bas). */
+    /** Fond de page : dégradé sombre du haut vers le bas. */
     static GradientDrawable fond() {
         return new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{BG_HAUT, BG});
     }
@@ -288,8 +339,8 @@ public class Ui {
     static Animator fondAnime(View v) {
         final GradientDrawable g = fond();
         v.setBackground(g);
-        final int[] teintesHaut = {0xFF6F6A82, 0xFF607A80, 0xFF7A6A72};
-        final int[] teintesBas = {0xFF54506A, 0xFF4C5E64, 0xFF5E5058};
+        final int[] teintesHaut = {0xFF19334A, 0xFF1A3A36, 0xFF2A2540};
+        final int[] teintesBas = {0xFF0C1925, 0xFF0E201C, 0xFF1A1627};
         final ArgbEvaluator ev0 = new ArgbEvaluator();
         // Teintes douces autour des couleurs du thème (même rendu qu'avant avec le thème d'origine).
         final int[] haut = new int[5];
