@@ -76,7 +76,7 @@ public class ProgrammeAlarme extends BroadcastReceiver {
         int n = 0, vus = 0;
         for (int k = 0; a != null && k < a.length(); k++) {
             JSONObject o = a.optJSONObject(k);
-            if (o == null || o.optLong("debut_ms", 0) < 0) continue;   // le film commencé la veille continue : on ne le liste pas
+            if (o == null || o.optLong("debut_ms", 0) < 0 || o.optBoolean("pub", false)) continue;   // film commencé la veille et spots publicitaires : non listés
             n++;
             if (vus >= 8) continue;
             vus++;

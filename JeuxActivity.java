@@ -30,6 +30,17 @@ public class JeuxActivity extends Activity {
         return c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(cle, 0);
     }
 
+    /** Vrai si le téléphone a une connexion internet. Les jeux, eux, fonctionnent toujours sans. */
+    static boolean internet(Context c) {
+        try {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager) c.getSystemService(Context.CONNECTIVITY_SERVICE);
+            android.net.NetworkInfo ni = cm == null ? null : cm.getActiveNetworkInfo();
+            return ni != null && ni.isConnected();
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
     static void enregistrer(Context c, String cle, int valeur) {
         SharedPreferences sp = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         if (valeur > sp.getInt(cle, 0)) {
@@ -108,6 +119,7 @@ public class JeuxActivity extends Activity {
         }
         // Renvoie mes records (au cas où l'envoi avait échoué hors connexion) et relit les meilleurs scores de tous.
         new Thread(() -> {
+            if (!internet(this)) return;          // hors ligne : on joue avec les records du téléphone, rien à envoyer
             for (String jeu : JEUX) {
                 ScoresJeux.envoyerSync(jeu, record(this, jeu));
                 String t = ScoresJeux.actualiser(jeu);
@@ -131,6 +143,10 @@ public class JeuxActivity extends Activity {
                 .setPositiveButton("Fermer", null)
                 .create();
         dlg.show();
+        if (!internet(this)) {
+            dlg.setMessage("Pas d'internet : le classement s'affichera quand vous serez connecté. Vous pouvez jouer hors ligne, votre record est gardé sur le téléphone.");
+            return;
+        }
         new Thread(() -> {
             JSONArray a = ScoresJeux.classement(jeu, 10);
             String txt;

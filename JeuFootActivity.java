@@ -2224,6 +2224,30 @@ public class JeuFootActivity extends Activity {
             }
         }
 
+        /** Vrai si le téléphone a une connexion internet (le jeu contre l'IA, lui, n'en a jamais besoin). */
+        private static boolean internetDispo(Context c) {
+            try {
+                android.net.ConnectivityManager cm = (android.net.ConnectivityManager) c.getSystemService(Context.CONNECTIVITY_SERVICE);
+                android.net.NetworkInfo ni = cm == null ? null : cm.getActiveNetworkInfo();
+                return ni != null && ni.isConnected();
+            } catch (Exception e) {
+                return true;                         // en cas de doute on laisse essayer
+            }
+        }
+
+        private long tReseau = 0;
+        private boolean reseauMemo = true;
+
+        /** Même chose, mais la réponse est gardée 2 secondes (le menu se redessine à chaque image). */
+        private boolean reseauOk() {
+            long t = SystemClock.uptimeMillis();
+            if (t - tReseau > 2000L) {
+                tReseau = t;
+                reseauMemo = internetDispo(ctx);
+            }
+            return reseauMemo;
+        }
+
         private void dessinerMenu(Canvas c) {
             float cx = largeur / 2f;
             rect(c, 0f, 0f, largeur, HAUT, 0xCC06101F);
@@ -2255,10 +2279,12 @@ public class JeuFootActivity extends Activity {
                     texte(c, NOM[eq], cx - 56f, ry[i] + 7f, 15f, 0xFFFFFFFF, Paint.Align.LEFT);
                 }
             }
-            rrect(c, cx - 95f, 264f, cx + 95f, 298f, 9f, 0xFFFF6B35);
-            texte(c, "COUP D'ENVOI · IA", cx, 287f, 15f, 0xFFFFFFFF, Paint.Align.CENTER);
-            rrect(c, cx - 115f, 303f, cx + 115f, 337f, 9f, 0xFF187A64);
-            texte(c, "JOUER EN LIGNE · HUMAIN", cx, 326f, 14f, 0xFFFFFFFF, Paint.Align.CENTER);
+            rrect(c, cx - 120f, 264f, cx + 120f, 298f, 9f, 0xFFFF6B35);
+            texte(c, "JOUER HORS LIGNE · CONTRE L'IA", cx, 287f, 14f, 0xFFFFFFFF, Paint.Align.CENTER);
+            boolean internet = reseauOk();
+            rrect(c, cx - 120f, 303f, cx + 120f, 337f, 9f, internet ? 0xFF187A64 : 0xFF455A64);
+            texte(c, internet ? "JOUER EN LIGNE · HUMAIN" : "EN LIGNE · INTERNET REQUIS", cx, 326f, 14f,
+                    internet ? 0xFFFFFFFF : 0xFFB0BEC5, Paint.Align.CENTER);
             texte(c, "Stick · TIR · PASSE · SPRINT · DÉFENSE", cx, 352f, 8f, 0xFF90A4AE, Paint.Align.CENTER);
         }
 
@@ -2286,11 +2312,15 @@ public class JeuFootActivity extends Activity {
                     return;
                 }
             }
-            if (x > cx - 100f && x < cx + 100f && y > 260f && y < 301f) {
-                demarrerMatch();
+            if (x > cx - 120f && x < cx + 120f && y > 260f && y < 301f) {
+                demarrerMatch();                      // match contre l'IA : aucune connexion internet nécessaire
                 return;
             }
             if (x > cx - 120f && x < cx + 120f && y > 300f && y < 341f) {
+                if (!reseauOk()) {
+                    Toast.makeText(ctx, "Pas d'internet : joue hors ligne contre l'IA.", Toast.LENGTH_LONG).show();
+                    return;
+                }
                 ((Activity) ctx).startActivity(new android.content.Intent(ctx, FootEnLigneActivity.class)
                         .putExtra("mode", pes ? "pes" : "foot"));
             }
