@@ -312,9 +312,9 @@ public class JeuFootActivity extends Activity {
 
         private void appliquerInstantane(JSONObject o) {
             JSONArray joueurs = o.optJSONArray("joueurs");
-            if (joueurs == null || joueurs.length() != js.length()) return;
+            if (joueurs == null || joueurs.length() != js.length) return;
             int ancienEtat = etat;
-            for (int i = 0; i < js.length(); i++) {
+            for (int i = 0; i < js.length; i++) {
                 JSONObject v = joueurs.optJSONObject(i);
                 if (v == null) return;
                 Joueur q = js[i];

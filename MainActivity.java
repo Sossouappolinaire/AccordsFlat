@@ -77,7 +77,9 @@ public class MainActivity extends Activity {
         entete.setClipToOutline(true);
 
         ImageView imageEntete = new ImageView(this);
-        imageEntete.setImageResource(R.drawable.kouame_playbox_hero);
+        // Image d'en-tête : cherchée par son nom, pour que l'appli compile même si le fichier n'est pas dans le projet.
+        int idHero = getResources().getIdentifier("kouame_playbox_hero", "drawable", getPackageName());
+        if (idHero != 0) imageEntete.setImageResource(idHero);
         imageEntete.setScaleType(ImageView.ScaleType.CENTER_CROP);
         entete.addView(imageEntete, new FrameLayout.LayoutParams(-1, -1));
 

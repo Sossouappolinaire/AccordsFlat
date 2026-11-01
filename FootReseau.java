@@ -35,7 +35,7 @@ final class FootReseau {
 
     static JSONArray invitations() {
         try {
-            String reponse = Supabase.rest("POST", "rpc/foot_invitations", "{}", null);
+            String reponse = Supabase.rest("POST", "rpc/foot_ligne_invitations", "{}", null);
             return reponse == null ? null : new JSONArray(reponse);
         } catch (Exception e) {
             return null;
@@ -107,7 +107,7 @@ final class FootReseau {
 
     static String inviter(String idJoueur, String mode) {
         try {
-            JSONObject resultat = rpc("foot_inviter",
+            JSONObject resultat = rpc("foot_ligne_inviter",
                     new JSONObject().put("p_invite", idJoueur).put("p_mode", mode));
             return resultat == null ? null : resultat.optString("id", null);
         } catch (Exception e) {
@@ -117,7 +117,7 @@ final class FootReseau {
 
     static String repondre(String duel, boolean accepter) {
         try {
-            JSONObject resultat = rpc("foot_repondre",
+            JSONObject resultat = rpc("foot_ligne_repondre",
                     new JSONObject().put("p_duel", duel).put("p_oui", accepter));
             return resultat == null ? "" : resultat.optString("etat", "");
         } catch (Exception e) {
@@ -127,7 +127,7 @@ final class FootReseau {
 
     static JSONObject info(String duel) {
         try {
-            return rpc("foot_info", new JSONObject().put("p_duel", duel));
+            return rpc("foot_ligne_info", new JSONObject().put("p_duel", duel));
         } catch (Exception e) {
             return null;
         }
@@ -139,7 +139,7 @@ final class FootReseau {
                     .put("p_duel", duel)
                     .put("p_input", entree == null ? new JSONObject() : entree)
                     .put("p_snapshot", instantane == null ? JSONObject.NULL : instantane);
-            return rpc("foot_sync", corps);
+            return rpc("foot_ligne_sync", corps);
         } catch (Exception e) {
             return null;
         }
@@ -147,7 +147,7 @@ final class FootReseau {
 
     static void quitter(String duel) {
         try {
-            rpc("foot_quitter", new JSONObject().put("p_duel", duel));
+            rpc("foot_ligne_quitter", new JSONObject().put("p_duel", duel));
         } catch (Exception ignore) {
         }
     }

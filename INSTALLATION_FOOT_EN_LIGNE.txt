@@ -10,7 +10,7 @@ FONCTIONNALITÉ
 
 INSTALLATION
 1. Extraire cette archive dans la racine du projet Android en remplaçant les fichiers Java et le manifeste.
-2. Dans Supabase, exécuter une fois section16_foot_en_ligne.sql après la configuration existante et
+2. Dans Supabase, section16_foot_en_ligne.sql est déjà appliqué (noms foot_ligne_*) ; sinon l exécuter une fois après la configuration existante et
    section11_motard_combat.sql. Cette migration utilise les comptes, profils et la présence déjà en place.
 3. Construire et tester avec deux comptes connectés au même backend Supabase.
 4. Incrémenter le versionCode de l'application avant de publier une mise à jour.

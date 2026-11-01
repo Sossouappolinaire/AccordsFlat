@@ -8,7 +8,7 @@
 -- par ces fonctions toutes les ~165 ms.
 -- =====================================================================
 
-create table if not exists public.duels_foot (
+create table if not exists public.duels_foot_ligne (
     id              uuid primary key default gen_random_uuid(),
     hote            uuid not null references auth.users (id) on delete cascade,
     invite          uuid not null references auth.users (id) on delete cascade,
@@ -24,21 +24,21 @@ create table if not exists public.duels_foot (
     invite_vu       timestamptz not null default now(),
     cree            timestamptz not null default now(),
     debut           timestamptz,
-    constraint duel_foot_pas_soi_meme check (hote <> invite)
+    constraint duel_foot_ligne_pas_soi_meme check (hote <> invite)
 );
 
-create index if not exists duels_foot_invite_etat
-    on public.duels_foot (invite, etat, cree desc);
+create index if not exists duels_foot_ligne_invite_etat
+    on public.duels_foot_ligne (invite, etat, cree desc);
 
-alter table public.duels_foot enable row level security;
-drop policy if exists "duel foot lecture" on public.duels_foot;
-create policy "duel foot lecture" on public.duels_foot
+alter table public.duels_foot_ligne enable row level security;
+drop policy if exists "duel foot ligne lecture" on public.duels_foot_ligne;
+create policy "duel foot ligne lecture" on public.duels_foot_ligne
     for select to authenticated using (auth.uid() in (hote, invite));
 
-revoke all on public.duels_foot from anon, authenticated;
-grant select on public.duels_foot to authenticated;
+revoke all on public.duels_foot_ligne from anon, authenticated;
+grant select on public.duels_foot_ligne to authenticated;
 
-create or replace function public.foot_inviter(p_invite uuid, p_mode text) returns json
+create or replace function public.foot_ligne_inviter(p_invite uuid, p_mode text) returns json
 language plpgsql security definer set search_path = public as $$
 declare
     v_uid uuid := auth.uid();
@@ -59,34 +59,34 @@ begin
      where id = p_invite and derniere_activite > now() - interval '3 minutes';
     if v_invite_nom is null then raise exception 'ce joueur n''est plus en ligne'; end if;
 
-    update public.duels_foot set etat = 'annule'
+    update public.duels_foot_ligne set etat = 'annule'
      where hote = v_uid and etat in ('invitation', 'accepte');
 
-    insert into public.duels_foot (hote, invite, hote_nom, invite_nom, mode)
+    insert into public.duels_foot_ligne (hote, invite, hote_nom, invite_nom, mode)
     values (v_uid, p_invite, v_hote_nom, v_invite_nom, p_mode)
     returning id into v_id;
 
     return json_build_object('id', v_id);
 end $$;
 
-create or replace function public.foot_invitations() returns json
+create or replace function public.foot_ligne_invitations() returns json
 language plpgsql security definer set search_path = public as $$
 begin
     if auth.uid() is null then raise exception 'connexion requise'; end if;
     return coalesce((
         select json_agg(json_build_object('id', id, 'de', hote_nom, 'mode', mode) order by cree desc)
-          from public.duels_foot
+          from public.duels_foot_ligne
          where invite = auth.uid() and etat = 'invitation'
            and cree > now() - interval '2 minutes'
     ), '[]'::json);
 end $$;
 
-create or replace function public.foot_repondre(p_duel uuid, p_oui boolean) returns json
+create or replace function public.foot_ligne_repondre(p_duel uuid, p_oui boolean) returns json
 language plpgsql security definer set search_path = public as $$
 declare v_etat text;
 begin
     if auth.uid() is null then raise exception 'connexion requise'; end if;
-    update public.duels_foot
+    update public.duels_foot_ligne
        set etat = case when p_oui then 'accepte' else 'refuse' end,
            debut = case when p_oui then now() else debut end,
            invite_vu = now()
@@ -96,30 +96,30 @@ begin
     return json_build_object('etat', coalesce(v_etat, 'expire'));
 end $$;
 
-create or replace function public.foot_info(p_duel uuid) returns json
+create or replace function public.foot_ligne_info(p_duel uuid) returns json
 language plpgsql security definer set search_path = public as $$
-declare d public.duels_foot; v_uid uuid := auth.uid();
+declare d public.duels_foot_ligne; v_uid uuid := auth.uid();
 begin
     if v_uid is null then raise exception 'connexion requise'; end if;
-    select * into d from public.duels_foot
+    select * into d from public.duels_foot_ligne
      where id = p_duel and v_uid in (hote, invite) for update;
     if not found then return json_build_object('etat', 'introuvable'); end if;
     if d.etat = 'invitation' and d.cree < now() - interval '2 minutes' then
-        update public.duels_foot set etat = 'annule' where id = p_duel;
+        update public.duels_foot_ligne set etat = 'annule' where id = p_duel;
         d.etat := 'annule';
     end if;
     return json_build_object('id', d.id, 'etat', d.etat, 'mode', d.mode,
         'hote_nom', d.hote_nom, 'invite_nom', d.invite_nom);
 end $$;
 
-create or replace function public.foot_sync(
+create or replace function public.foot_ligne_sync(
     p_duel uuid,
     p_input jsonb,
     p_snapshot jsonb default null
 ) returns json
 language plpgsql security definer set search_path = public as $$
 declare
-    d public.duels_foot;
+    d public.duels_foot_ligne;
     v_uid uuid := auth.uid();
     v_input jsonb;
     v_jx numeric;
@@ -135,7 +135,7 @@ begin
         raise exception 'état du match trop volumineux';
     end if;
 
-    select * into d from public.duels_foot
+    select * into d from public.duels_foot_ligne
      where id = p_duel and v_uid in (hote, invite) for update;
     if not found then return json_build_object('ok', false, 'etat', 'introuvable'); end if;
     if d.etat not in ('accepte', 'en_cours') then
@@ -163,7 +163,7 @@ begin
     );
 
     if v_uid = d.hote then
-        update public.duels_foot
+        update public.duels_foot_ligne
            set entree_hote = v_input,
                instantane = coalesce(p_snapshot, instantane),
                hote_vu = now(),
@@ -171,17 +171,17 @@ begin
                debut = coalesce(debut, now())
          where id = p_duel;
     else
-        update public.duels_foot
+        update public.duels_foot_ligne
            set entree_invite = v_input, invite_vu = now(), etat = 'en_cours',
                debut = coalesce(debut, now())
          where id = p_duel;
     end if;
 
-    select * into d from public.duels_foot where id = p_duel;
+    select * into d from public.duels_foot_ligne where id = p_duel;
     if d.etat = 'en_cours'
        and (d.hote_vu < now() - interval '45 seconds'
             or d.invite_vu < now() - interval '45 seconds') then
-        update public.duels_foot set etat = 'termine' where id = p_duel;
+        update public.duels_foot_ligne set etat = 'termine' where id = p_duel;
         d.etat := 'termine';
     end if;
 
@@ -193,27 +193,27 @@ begin
     );
 end $$;
 
-create or replace function public.foot_quitter(p_duel uuid) returns json
+create or replace function public.foot_ligne_quitter(p_duel uuid) returns json
 language plpgsql security definer set search_path = public as $$
 declare v_uid uuid := auth.uid();
 begin
     if v_uid is null then raise exception 'connexion requise'; end if;
-    update public.duels_foot set etat = 'termine'
+    update public.duels_foot_ligne set etat = 'termine'
      where id = p_duel and v_uid in (hote, invite)
        and etat in ('invitation', 'accepte', 'en_cours');
     return json_build_object('ok', true);
 end $$;
 
-revoke all on function public.foot_inviter(uuid, text) from public, anon, authenticated;
-revoke all on function public.foot_invitations() from public, anon, authenticated;
-revoke all on function public.foot_repondre(uuid, boolean) from public, anon, authenticated;
-revoke all on function public.foot_info(uuid) from public, anon, authenticated;
-revoke all on function public.foot_sync(uuid, jsonb, jsonb) from public, anon, authenticated;
-revoke all on function public.foot_quitter(uuid) from public, anon, authenticated;
+revoke all on function public.foot_ligne_inviter(uuid, text) from public, anon, authenticated;
+revoke all on function public.foot_ligne_invitations() from public, anon, authenticated;
+revoke all on function public.foot_ligne_repondre(uuid, boolean) from public, anon, authenticated;
+revoke all on function public.foot_ligne_info(uuid) from public, anon, authenticated;
+revoke all on function public.foot_ligne_sync(uuid, jsonb, jsonb) from public, anon, authenticated;
+revoke all on function public.foot_ligne_quitter(uuid) from public, anon, authenticated;
 
-grant execute on function public.foot_inviter(uuid, text) to authenticated;
-grant execute on function public.foot_invitations() to authenticated;
-grant execute on function public.foot_repondre(uuid, boolean) to authenticated;
-grant execute on function public.foot_info(uuid) to authenticated;
-grant execute on function public.foot_sync(uuid, jsonb, jsonb) to authenticated;
-grant execute on function public.foot_quitter(uuid) to authenticated;
+grant execute on function public.foot_ligne_inviter(uuid, text) to authenticated;
+grant execute on function public.foot_ligne_invitations() to authenticated;
+grant execute on function public.foot_ligne_repondre(uuid, boolean) to authenticated;
+grant execute on function public.foot_ligne_info(uuid) to authenticated;
+grant execute on function public.foot_ligne_sync(uuid, jsonb, jsonb) to authenticated;
+grant execute on function public.foot_ligne_quitter(uuid) to authenticated;
