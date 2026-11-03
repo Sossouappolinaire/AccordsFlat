@@ -158,6 +158,12 @@ public class StockDb {
         return new ArrayList<>(s);
     }
 
+    /** Date de la dernière production d'un massier (ou "" s'il n'y en a pas). */
+    public String lastProd(String massier) {
+        for (String[] e : entrees) if (PROD.equals(e[0]) && e[1].equals(massier)) return e[4];
+        return "";
+    }
+
     /** type = PROD, SALE ou null pour tout. Ligne : type, massier, n15, n10, date, auteur. */
     public List<String[]> history(String type) {
         List<String[]> l = new ArrayList<>();

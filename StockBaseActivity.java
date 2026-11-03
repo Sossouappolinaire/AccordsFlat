@@ -149,7 +149,7 @@ public abstract class StockBaseActivity extends Activity {
         c.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1));
         c.addView(StockUi.tv(this, label, 12, StockUi.GRAY, true));
         c.addView(StockUi.tv(this, String.valueOf(qty), 22, color, true));
-        c.addView(StockUi.tv(this, StockUi.money(price), 12, StockUi.GRAY, false));
+        if (price >= 0) c.addView(StockUi.tv(this, StockUi.money(price), 12, StockUi.GRAY, false));
         return c;
     }
 
@@ -203,10 +203,12 @@ public abstract class StockBaseActivity extends Activity {
         c.addView(top);
         LinearLayout r = new LinearLayout(this);
         r.setPadding(0, StockUi.dp(this, 10), 0, StockUi.dp(this, 6));
-        r.addView(col("5/15", n15, n15 * StockDb.PRIX_515, color));
-        r.addView(col("5/10", n10, n10 * StockDb.PRIX_510, color));
+        // Vente : seulement le nombre vendu (pas de prix). Production : montant dû aux producteurs (prix à l'unité).
+        r.addView(col("5/15", n15, prod ? n15 * StockDb.PRIX_515 : -1, color));
+        r.addView(col("5/10", n10, prod ? n10 * StockDb.PRIX_510 : -1, color));
         c.addView(r);
-        c.addView(StockUi.tv(this, "Total : " + StockUi.money(n15 * StockDb.PRIX_515 + n10 * StockDb.PRIX_510), 15, color, true));
+        if (prod) c.addView(StockUi.tv(this, "À payer aux producteurs : " + StockUi.money(n15 * StockDb.PRIX_515 + n10 * StockDb.PRIX_510), 15, color, true));
+        else c.addView(StockUi.tv(this, "Total vendu : " + (n15 + n10), 15, color, true));
         TextView d = StockUi.tv(this, e[4] + "  •  " + e[5], 12, StockUi.GRAY, false);
         d.setPadding(0, StockUi.dp(this, 6), 0, 0);
         c.addView(d);

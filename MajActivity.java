@@ -201,7 +201,7 @@ public class MajActivity extends Activity {
         note = Ui.champ(this, "Note pour cette mise à jour (facultatif)");
         Ui.ajouter(avance, note, 8);
 
-        publier = Ui.bouton(this, "📤 Publier pour tous les utilisateurs", Ui.VERT);
+        publier = Ui.bouton(this, "📤 Publier le fichier JSON (pas l'APK)", Ui.VERT);
         publier.setOnClickListener(v -> confirmerPublication());
         Ui.ajouter(avance, publier, 8);
         pliable(c, "Avancé : contenu zip et fichier JSON", avance);
@@ -559,6 +559,10 @@ public class MajActivity extends Activity {
             contenu = new JSONObject(editeur.getText().toString().trim());
         } catch (Exception e) {
             statut.setText("⚠ Le fichier n'est pas du JSON valide : " + e.getMessage());
+            return;
+        }
+        if (contenu.length() == 0) {
+            statut.setText("⚠ Le fichier JSON est vide : rien à publier. Pour envoyer une nouvelle version de l'appli, utilisez « Envoyer et mettre à jour tout le monde » plus haut.");
             return;
         }
         new AlertDialog.Builder(this)

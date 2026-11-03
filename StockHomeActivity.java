@@ -39,7 +39,7 @@ public class StockHomeActivity extends StockBaseActivity {
         stats.addView(StockUi.statBox(this, "Stock 5/15", String.valueOf(p[0] - s[0]), StockUi.BLUE));
         stats.addView(StockUi.statBox(this, "Stock 5/10", String.valueOf(p[1] - s[1]), StockUi.TEAL));
         long[] wk = db.weeklySales().get(0);
-        stats.addView(StockUi.statBox(this, "Vendu semaine", StockUi.money((int) wk[1] * StockDb.PRIX_515 + (int) wk[2] * StockDb.PRIX_510), StockUi.GREEN));
+        stats.addView(StockUi.statBox(this, "Vendu semaine", (wk[1] + wk[2]) + " vendus", StockUi.GREEN));
         body.addView(stats);
 
         body.addView(StockUi.sectionTitle(this, "Menu principal", StockUi.INDIGO));

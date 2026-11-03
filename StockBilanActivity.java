@@ -8,7 +8,7 @@ import java.util.List;
 public class StockBilanActivity extends StockBaseActivity {
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
-        init("Bilan et prix", "5/15 = " + StockDb.PRIX_515 + " F   •   5/10 = " + StockDb.PRIX_510 + " F", true, false);
+        init("Bilan et prix", "Prix producteurs : 5/15 = " + StockDb.PRIX_515 + " F   •   5/10 = " + StockDb.PRIX_510 + " F l'unité", true, false);
     }
 
     private void row(LinearLayout c, String l, String v, int color, boolean bold) {
@@ -29,9 +29,9 @@ public class StockBilanActivity extends StockBaseActivity {
         top.addView(t);
         if (current) top.addView(StockUi.pill(this, "CETTE SEMAINE", StockUi.GREEN));
         c.addView(top);
-        row(c, "5/15 vendus : " + n15 + " × " + StockDb.PRIX_515, StockUi.money(n15 * StockDb.PRIX_515), StockUi.DARK, false);
-        row(c, "5/10 vendus : " + n10 + " × " + StockDb.PRIX_510, StockUi.money(n10 * StockDb.PRIX_510), StockUi.DARK, false);
-        row(c, "Prix total 5/15 + 5/10", StockUi.money(n15 * StockDb.PRIX_515 + n10 * StockDb.PRIX_510), StockUi.GREEN, true);
+        row(c, "5/15 vendus", String.valueOf(n15), StockUi.DARK, false);
+        row(c, "5/10 vendus", String.valueOf(n10), StockUi.DARK, false);
+        row(c, "Total vendu", String.valueOf(n15 + n10), StockUi.GREEN, true);
         return c;
     }
 
@@ -48,27 +48,26 @@ public class StockBilanActivity extends StockBaseActivity {
             foldButton(body, "Voir les autres semaines (" + (weeks.size() - 1) + ")", "Masquer les autres semaines", box);
         }
 
-        body.addView(StockUi.sectionTitle(this, "Valeur de la production", StockUi.BLUE));
+        body.addView(StockUi.sectionTitle(this, "À payer aux producteurs (production)", StockUi.BLUE));
         LinearLayout d = StockUi.card(this);
         row(d, "Produit 5/15 : " + p[0], StockUi.money(p[0] * StockDb.PRIX_515), StockUi.DARK, false);
         row(d, "Produit 5/10 : " + p[1], StockUi.money(p[1] * StockDb.PRIX_510), StockUi.DARK, false);
-        row(d, "Valeur totale produite", StockUi.money(p[0] * StockDb.PRIX_515 + p[1] * StockDb.PRIX_510), StockUi.BLUE, true);
+        row(d, "Total à payer aux producteurs", StockUi.money(p[0] * StockDb.PRIX_515 + p[1] * StockDb.PRIX_510), StockUi.BLUE, true);
         body.addView(d);
 
-        body.addView(StockUi.sectionTitle(this, "Valeur du stock restant", StockUi.TEAL));
+        body.addView(StockUi.sectionTitle(this, "Stock restant", StockUi.TEAL));
         LinearLayout e = StockUi.card(this);
-        row(e, "Stock 5/15 : " + (p[0] - s[0]), StockUi.money((p[0] - s[0]) * StockDb.PRIX_515), StockUi.DARK, false);
-        row(e, "Stock 5/10 : " + (p[1] - s[1]), StockUi.money((p[1] - s[1]) * StockDb.PRIX_510), StockUi.DARK, false);
-        row(e, "Valeur totale du stock", StockUi.money((p[0] - s[0]) * StockDb.PRIX_515 + (p[1] - s[1]) * StockDb.PRIX_510), StockUi.TEAL, true);
+        row(e, "Stock 5/15", String.valueOf(p[0] - s[0]), StockUi.DARK, false);
+        row(e, "Stock 5/10", String.valueOf(p[1] - s[1]), StockUi.DARK, false);
         body.addView(e);
 
-        body.addView(StockUi.sectionTitle(this, "Ventes par massier (total)", StockUi.ORANGE));
+        body.addView(StockUi.sectionTitle(this, "Nombre vendu par massier", StockUi.ORANGE));
         List<String> ms = db.massiers();
         if (ms.isEmpty()) body.addView(infoCard("Aucun massier pour le moment."));
         LinearLayout f = StockUi.card(this);
         for (String m : ms) {
             int[] ss = db.totals(StockDb.SALE, m);
-            row(f, m + " (" + ss[0] + " / " + ss[1] + ")", StockUi.money(ss[0] * StockDb.PRIX_515 + ss[1] * StockDb.PRIX_510), StockUi.ORANGE, true);
+            row(f, m + " (5/15 : " + ss[0] + "  •  5/10 : " + ss[1] + ")", String.valueOf(ss[0] + ss[1]), StockUi.ORANGE, true);
         }
         if (!ms.isEmpty()) body.addView(f);
     }

@@ -8,7 +8,7 @@ import java.util.List;
 public class StockSalesActivity extends StockBaseActivity {
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
-        init(StockSession.admin() ? "Ventes" : "Vendre", StockSession.admin() ? "Ventes ajoutées par le propriétaire" : "Enregistrer le nombre de 5/15 et 5/10 vendus", true, false);
+        init(StockSession.admin() ? "Ventes" : "Vendre", StockSession.admin() ? "Ventes ajoutées par le propriétaire" : "Ajouter le nombre de 5/15 et 5/10 vendus (pour calculer le stock)", true, false);
     }
 
     @Override protected void render() {
@@ -31,8 +31,8 @@ public class StockSalesActivity extends StockBaseActivity {
                     }
                     public void onNothingSelected(AdapterView<?> p) {}
                 });
-                final EditText a = StockUi.num(this, "Nombre de 5/15 vendus  (" + StockDb.PRIX_515 + " F)");
-                final EditText c = StockUi.num(this, "Nombre de 5/10 vendus  (" + StockDb.PRIX_510 + " F)");
+                final EditText a = StockUi.num(this, "Nombre de 5/15 vendus");
+                final EditText c = StockUi.num(this, "Nombre de 5/10 vendus");
                 Button s = StockUi.btn(this, "Enregistrer la vente", StockUi.ORANGE);
                 f.addView(sp); f.addView(dispo); f.addView(a); f.addView(c); f.addView(s);
                 s.setOnClickListener(v -> {
@@ -45,8 +45,7 @@ public class StockSalesActivity extends StockBaseActivity {
                         return;
                     }
                     envoyer(v, () -> db.addEntry(StockDb.SALE, name, n15, n10),
-                            "✔ Vente enregistrée le " + StockDb.now() + "\n" + name + " — 5/15 : " + n15 + "  |  5/10 : " + n10
-                            + "\nTotal : " + StockUi.money(n15 * StockDb.PRIX_515 + n10 * StockDb.PRIX_510));
+                            "✔ Vente enregistrée le " + StockDb.now() + "\n" + name + " — 5/15 : " + n15 + "  |  5/10 : " + n10);
                 });
             }
             body.addView(f);
