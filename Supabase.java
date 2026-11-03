@@ -544,28 +544,66 @@ final class Supabase {
         return stockage("GET", nom);
     }
 
-    /** Admin : envoie (ou remplace) un zip de contenu. Renvoie "" si c'est fait, sinon un code d'erreur. */
-    static String envoyerPaquet(String nom, InputStream in, long taille) {
-        HttpURLConnection c = null;
-        try {
-            c = stockage("POST", nom);
-            c.setRequestProperty("Content-Type", "application/zip");
-            c.setRequestProperty("x-upsert", "true");
-            c.setDoOutput(true);
-            if (taille > 0) c.setFixedLengthStreamingMode(taille);
-            else c.setChunkedStreamingMode(65536);
-            java.io.OutputStream out = c.getOutputStream();
-            byte[] buf = new byte[65536];
-            int n;
-            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-            out.close();
-            int code = c.getResponseCode();
-            return code < 300 ? "" : "http " + code;
-        } catch (Exception e) {
-            return "reseau";
-        } finally {
-            if (c != null) c.disconnect();
+    /** Source d'un fichier à envoyer, ré-ouvrable pour recommencer l'envoi depuis le début. */
+    interface Flux { InputStream ouvrir() throws Exception; }
+
+    /** Avancement d'un envoi : octets envoyés, total, numéro de l'essai (1 à 3). Appelé depuis le thread d'envoi. */
+    interface Progression { void maj(long envoye, long total, int essai); }
+
+    /**
+     * Envoie (ou remplace) un fichier dans le stockage, avec 3 essais (un jeton neuf à chaque essai) et l'avancement.
+     * Renvoie "" si c'est fait, sinon un code : "http NNN" (refus du serveur) ou "reseau" (détail dans derniereErreur).
+     */
+    private static String envoyerFichier(String dossier, String nom, String type, Flux src, long taille, Progression prog) {
+        String code = "reseau";
+        for (int essai = 1; essai <= 3; essai++) {
+            HttpURLConnection c = null;
+            try (InputStream in = src.ouvrir()) {
+                c = stockageDans(dossier, "POST", nom);   // jeton renouvelé si besoin (un envoi long peut dépasser sa durée)
+                c.setRequestProperty("Content-Type", type);
+                c.setRequestProperty("x-upsert", "true");
+                c.setReadTimeout(180000);
+                c.setDoOutput(true);
+                if (taille > 0) c.setFixedLengthStreamingMode(taille);
+                else c.setChunkedStreamingMode(65536);
+                java.io.OutputStream out = c.getOutputStream();
+                byte[] buf = new byte[32768];
+                long envoye = 0, dernierMaj = 0;
+                int n;
+                if (prog != null) prog.maj(0, taille, essai);
+                while ((n = in.read(buf)) > 0) {
+                    out.write(buf, 0, n);
+                    envoye += n;
+                    long t = System.currentTimeMillis();
+                    if (prog != null && t - dernierMaj > 300) { dernierMaj = t; prog.maj(envoye, taille, essai); }
+                }
+                out.close();
+                int rep = c.getResponseCode();
+                if (rep < 300) {
+                    derniereErreur = "";
+                    if (prog != null) prog.maj(taille > 0 ? taille : envoye, taille, essai);
+                    return "";
+                }
+                code = "http " + rep;
+                derniereErreur = "Refusé par le serveur (http " + rep + ")";
+                // refus définitif (fichier trop gros, droits, introuvable) : inutile de recommencer
+                if (rep < 500 && rep != 401 && rep != 408 && rep != 429) return code;
+            } catch (Exception e) {
+                code = "reseau";
+                derniereErreur = "Connexion interrompue (" + e.getClass().getSimpleName() + ")";
+            } finally {
+                if (c != null) c.disconnect();
+            }
+            if (essai < 3) {
+                try { Thread.sleep(2000L * essai); } catch (InterruptedException ie) { return "reseau"; }
+            }
         }
+        return code;
+    }
+
+    /** Admin : envoie (ou remplace) un zip de contenu. Renvoie "" si c'est fait, sinon un code d'erreur. */
+    static String envoyerPaquet(String nom, Flux src, long taille, Progression prog) {
+        return envoyerFichier("contenu-app", nom, "application/zip", src, taille, prog);
     }
 
     // ---------- Mise à jour de l'application (APK dans la base, voir section10_mise_a_jour_apk.sql) ----------
@@ -588,36 +626,17 @@ final class Supabase {
     }
 
     /** Admin : envoie un APK dans la base. Renvoie "" si c'est fait, sinon un code d'erreur. */
-    static String envoyerApk(String nom, InputStream in, long taille) {
-        HttpURLConnection c = null;
-        try {
-            c = stockageDans("apk-app", "POST", nom);
-            c.setRequestProperty("Content-Type", "application/vnd.android.package-archive");
-            c.setRequestProperty("x-upsert", "true");
-            c.setReadTimeout(180000);
-            c.setDoOutput(true);
-            if (taille > 0) c.setFixedLengthStreamingMode(taille);
-            else c.setChunkedStreamingMode(65536);
-            java.io.OutputStream out = c.getOutputStream();
-            byte[] buf = new byte[65536];
-            int n;
-            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-            out.close();
-            int code = c.getResponseCode();
-            return code < 300 ? "" : "http " + code;
-        } catch (Exception e) {
-            return "reseau";
-        } finally {
-            if (c != null) c.disconnect();
-        }
+    static String envoyerApk(String nom, Flux src, long taille, Progression prog) {
+        return envoyerFichier("apk-app", nom, "application/vnd.android.package-archive", src, taille, prog);
     }
 
     /** Admin : annonce la version à tous les comptes (l'APK doit déjà être envoyé). "" si c'est fait, sinon un code d'erreur. */
     static String adminMajPublier(int versionCode, String versionName, String note, String apk, long taille, boolean obligatoire) {
         try {
+            // p_note doit TOUJOURS être envoyé (même vide) : sans lui la base ne trouve pas la fonction (http 404)
             JSONObject o = new JSONObject().put("p_version_code", versionCode).put("p_version_name", versionName)
+                    .put("p_note", note == null ? "" : note)
                     .put("p_apk", apk).put("p_taille", taille).put("p_obligatoire", obligatoire);
-            if (note != null && !note.isEmpty()) o.put("p_note", note);
             String r = rest("POST", "rpc/admin_maj_publier", o.toString(), null);
             if (r == null) return derniereErreur.isEmpty() ? "reseau" : derniereErreur;
             JSONObject j = new JSONObject(r);

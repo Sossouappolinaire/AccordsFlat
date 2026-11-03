@@ -57,6 +57,13 @@ public class AdminActivity extends Activity {
         majTxt = Ui.texte(this, "", 13, Ui.TXT2, false);
         Ui.ajouter(c, majTxt, 6);
 
+        Button carriere = Ui.bouton(this, "⛏ Gestion de la carrière", Ui.ACCENT);
+        carriere.setOnClickListener(v -> {
+            StockSession.ouvrir("ADMIN", "", Compte.nom(), "");
+            startActivity(new Intent(this, StockHomeActivity.class));
+        });
+        Ui.ajouter(c, carriere, 8);
+
         Button sortir = Ui.boutonContour(this, "Se déconnecter", Ui.TXT);
         sortir.setOnClickListener(v -> new AlertDialog.Builder(this)
                 .setTitle("Se déconnecter ?")
