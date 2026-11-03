@@ -526,9 +526,39 @@ public class AuthActivity extends Activity {
 
     private boolean emailValide(String e) { return Patterns.EMAIL_ADDRESS.matcher(e).matches(); }
 
+    /** Vrai si le champ « email » ne contient qu'un numéro (chiffres, avec un + devant et des espaces éventuels). */
+    private boolean estNumero(String e) { return e.replace(" ", "").matches("\\+?[0-9]{3,}"); }
+
+    /** Numéro + PIN : si le compte propriétaire existe dans la base, on ouvre Stock Massiers au lieu de l'accueil habituel. */
+    private void ouvrirStockMassiers(final String numero, final String pin) {
+        final String num = numero.replace(" ", "");
+        final String code = pin.trim();
+        if (code.isEmpty()) { info("Entrez votre code PIN.", true); return; }
+        occupe(true);
+        new Thread(() -> {
+            final org.json.JSONObject r = StockDb.connexion(num, code);
+            final String panne = r == null ? StockDb.erreurReseau() : null;
+            runOnUiThread(() -> {
+                occupe(false);
+                if (r == null) { info(panne, true); return; }
+                if (!r.optBoolean("ok") || !"OWNER".equals(r.optString("role"))) {
+                    info(r.optString("erreur", "Numéro ou PIN incorrect."), true);
+                    return;
+                }
+                StockSession.ouvrir("OWNER", num, r.optString("nom"), code);
+                Intent i = new Intent(this, StockHomeActivity.class);
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                startActivity(i);
+                finish();
+            });
+        }).start();
+    }
+
     private void valider() {
         if (occupe) return;
         if (mode == CONNEXION) {
+            // Accès Stock Massiers : « email » = un numéro de téléphone, « mot de passe » = le code PIN
+            if (estNumero(email())) { ouvrirStockMassiers(email(), passe()); return; }
             if (!emailValide(email())) { info("Entrez une adresse email valide.", true); return; }
             if (passe().isEmpty()) { info("Entrez votre mot de passe.", true); return; }
             final String e = email(), pw = passe();

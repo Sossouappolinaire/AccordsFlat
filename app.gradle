@@ -30,8 +30,8 @@ android {
         minSdk 24
         targetSdk 34
         // À AUGMENTER à chaque nouvelle version (sinon Android refuse de remplacer l'ancienne).
-        versionCode 21
-        versionName '1.21'
+        versionCode 24
+        versionName '1.24'
     }
 
     if (signingConfigured) {

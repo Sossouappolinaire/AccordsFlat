@@ -262,5 +262,14 @@
             android:name=".ExercicesActivity"
             android:exported="false" />
 
+        <!-- STOCK MASSIERS (intégré) : ouvert depuis l'écran de connexion avec un numéro + PIN -->
+        <activity android:name=".StockHomeActivity" android:exported="false" />
+        <activity android:name=".StockProductionActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".StockSalesActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".StockEtatActivity" android:exported="false" />
+        <activity android:name=".StockHistoryActivity" android:exported="false" />
+        <activity android:name=".StockBilanActivity" android:exported="false" />
+        <activity android:name=".StockAccountsActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+
     </application>
 </manifest>
