@@ -29,6 +29,10 @@ public class StockDb {
     private static volatile List<String[]> entrees = new ArrayList<>();
     /** Propriétaires : téléphone, nom et prénom, date de création (administrateur seulement). */
     private static volatile List<String[]> proprietaires = new ArrayList<>();
+    /** Secrétariat : id, lot, massier, producteur, n15, n10, date, auteur — le plus récent d'abord. */
+    private static volatile List<String[]> secretariat = new ArrayList<>();
+    /** Comptes secrétaire : téléphone, nom et prénom, massier, date de création (administrateur seulement). */
+    private static volatile List<String[]> secretaires = new ArrayList<>();
     private static volatile boolean pret = false;
 
     public StockDb(Context c) { }
@@ -38,6 +42,8 @@ public class StockDb {
     public static void vider() {
         entrees = new ArrayList<>();
         proprietaires = new ArrayList<>();
+        secretariat = new ArrayList<>();
+        secretaires = new ArrayList<>();
         pret = false;
     }
 
@@ -97,7 +103,24 @@ public class StockDb {
                 JSONObject o = b.getJSONObject(i);
                 p.add(new String[]{o.optString("tel"), o.optString("nom"), o.optString("cree")});
             }
+            List<String[]> sc = new ArrayList<>();
+            JSONArray c = r.optJSONArray("secretariat");
+            for (int i = 0; c != null && i < c.length(); i++) {
+                JSONObject o = c.getJSONObject(i);
+                String par = o.optString("par", "") + ("ADMIN".equals(o.optString("role")) ? " (Administrateur)" : " (Secrétaire)");
+                sc.add(new String[]{String.valueOf(o.optLong("id")), String.valueOf(o.optLong("lot")), o.optString("massier"),
+                        o.optString("producteur"), String.valueOf(o.optInt("n15")), String.valueOf(o.optInt("n10")),
+                        o.optString("ts"), par});
+            }
+            List<String[]> se = new ArrayList<>();
+            JSONArray d = r.optJSONArray("secretaires");
+            for (int i = 0; d != null && i < d.length(); i++) {
+                JSONObject o = d.getJSONObject(i);
+                se.add(new String[]{o.optString("tel"), o.optString("nom"), o.optString("massier"), o.optString("cree")});
+            }
             entrees = e;
+            secretariat = sc;
+            secretaires = se;
             proprietaires = p;
             pret = true;
             return null;
@@ -130,7 +153,60 @@ public class StockDb {
         }
     }
 
+    private static String reponse(String fonction, JSONObject corps) {
+        JSONObject r = appel(fonction, corps);
+        if (r == null) return erreurReseau();
+        return r.optBoolean("ok") ? null : r.optString("erreur", "Refusé par le serveur.");
+    }
+
+    /** Crée un compte secrétaire lié à un massier (administrateur seulement). Renvoie null si c'est créé, sinon l'erreur. */
+    public String createSecretary(String nom, String numero, String pin, String massier) {
+        try {
+            return reponse("stock_creer_secretaire", new JSONObject()
+                    .put("p_nom", nom).put("p_numero", numero).put("p_code", pin).put("p_massier", massier));
+        } catch (Exception e) { return "Erreur : " + e.getMessage(); }
+    }
+
+    /** Le secrétaire envoie sa liste complète : tableau de {producteur, n15, n10}. */
+    public String secretariatEnvoyer(JSONArray lignes) {
+        try { return reponse("stock_secretariat_envoyer", identite().put("p_lignes", lignes)); }
+        catch (Exception e) { return "Erreur : " + e.getMessage(); }
+    }
+
+    public String secretariatAjouter(String massier, String producteur, int n15, int n10) {
+        try {
+            return reponse("stock_secretariat_ajouter", new JSONObject().put("p_massier", massier)
+                    .put("p_producteur", producteur).put("p_n15", n15).put("p_n10", n10));
+        } catch (Exception e) { return "Erreur : " + e.getMessage(); }
+    }
+
+    public String secretariatModifier(long id, String producteur, int n15, int n10) {
+        try {
+            return reponse("stock_secretariat_modifier", new JSONObject().put("p_id", id)
+                    .put("p_producteur", producteur).put("p_n15", n15).put("p_n10", n10));
+        } catch (Exception e) { return "Erreur : " + e.getMessage(); }
+    }
+
+    public String secretariatSupprimer(long id) {
+        try { return reponse("stock_secretariat_supprimer", new JSONObject().put("p_id", id)); }
+        catch (Exception e) { return "Erreur : " + e.getMessage(); }
+    }
+
     // ------------------------------------------------------------------ lecture (copie en mémoire)
+
+    /** Liste {téléphone, nom et prénom, massier, date de création} des comptes secrétaire. */
+    public List<String[]> secretaires() { return secretaires; }
+
+    /** Listes du secrétariat regroupées par envoi, la plus récente d'abord. Ligne : id, lot, massier, producteur, n15, n10, date, auteur. */
+    public List<List<String[]>> lots() {
+        java.util.LinkedHashMap<String, List<String[]>> m = new java.util.LinkedHashMap<>();
+        for (String[] l : secretariat) {
+            List<String[]> g = m.get(l[1]);
+            if (g == null) { g = new ArrayList<>(); m.put(l[1], g); }
+            g.add(l);
+        }
+        return new ArrayList<>(m.values());
+    }
 
     /** Liste {téléphone, nom et prénom, date de création} des comptes propriétaires. */
     public List<String[]> owners() { return proprietaires; }

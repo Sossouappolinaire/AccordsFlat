@@ -15,7 +15,8 @@ public class StockHomeActivity extends StockBaseActivity {
             init("Gestion de la carrière", "Administrateur" + (nom.isEmpty() ? "" : "  •  " + nom), true, false);
         } else {
             // Propriétaire : son nom et prénom en haut + « Retour hors carrière »
-            init(nom.isEmpty() ? "Accueil" : nom, "Propriétaire  •  " + StockSession.phone, false, true);
+            String sous = StockSession.secretaire() ? "Secrétaire  •  " + StockSession.massier : "Propriétaire  •  " + StockSession.phone;
+            init(nom.isEmpty() ? "Accueil" : nom, sous, false, true);
         }
     }
 
@@ -47,13 +48,19 @@ public class StockHomeActivity extends StockBaseActivity {
         View hist = StockUi.tile(this, "🕒", "Historique", "Tout, avec date et heure", StockUi.PURPLE, v -> go(StockHistoryActivity.class));
         View bilan = StockUi.tile(this, "📊", "Bilan et prix", "Montants en francs", StockUi.TEAL, v -> go(StockBilanActivity.class));
 
-        if (StockSession.admin()) {
+        View secr = StockUi.tile(this, "📝", "Secrétariat",
+                StockSession.admin() ? "Listes des secrétaires et prix" : "Ajouter et envoyer une liste", StockUi.PINK, v -> go(StockSecretariatActivity.class));
+
+        if (StockSession.secretaire()) {
+            body.addView(row(secr, stock));
+        } else if (StockSession.admin()) {
             View prod = StockUi.tile(this, "🧱", "Production", "Ajouter par massier", StockUi.GREEN, v -> go(StockProductionActivity.class));
             View sales = StockUi.tile(this, "💰", "Ventes", "Ajoutées par le propriétaire", StockUi.ORANGE, v -> go(StockSalesActivity.class));
             View acc = StockUi.tile(this, "👤", "Comptes", "Créer le propriétaire", StockUi.PINK, v -> go(StockAccountsActivity.class));
             body.addView(row(prod, sales));
             body.addView(row(stock, bilan));
             body.addView(row(hist, acc));
+            body.addView(row(secr, spacer()));
         } else {
             View sales = StockUi.tile(this, "💰", "Vendre", "Enregistrer une vente", StockUi.ORANGE, v -> go(StockSalesActivity.class));
             View prod = StockUi.tile(this, "🧱", "Productions", "Ajouts de l'administrateur", StockUi.GREEN, v -> go(StockProductionActivity.class));

@@ -8,7 +8,12 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.speech.tts.TextToSpeech;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
+import android.text.TextPaint;
 import android.text.TextUtils;
+import android.text.method.LinkMovementMethod;
+import android.text.style.ClickableSpan;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
@@ -18,6 +23,7 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.OptIn;
 import androidx.media3.common.MediaItem;
@@ -54,7 +60,7 @@ import java.util.Map;
  * PUBLICITÉ : après chaque film et chaque série, le serveur met un spot (section17_tv_publicite.sql) qui enchaîne la
  * bande d'annonce (10 s) de TOUS les films et séries programmés ce jour-là, en commençant par le prochain film.
  * Le message « TV Kouamé est votre télévision Facebook. En Dieu nous comptons. » est écrit à l'écran et dit à voix
- * haute. Les spots ne figurent pas dans la liste « Programme du jour ».
+ * haute. Les spots figurent dans la liste « Programme du jour » (ligne « 📣 Publicité TV Kouamé »).
  */
 @OptIn(markerClass = UnstableApi.class)
 public class TvKouameActivity extends Activity {
@@ -86,7 +92,13 @@ public class TvKouameActivity extends Activity {
     private long pubDit = Long.MIN_VALUE;   // début du spot déjà annoncé à voix haute
     private long pubPrefetch = Long.MIN_VALUE;  // début du spot dont on a préparé les bandes d'annonce
     private Prog lu = null;                  // vidéo réellement lue : le programme, ou la bande d'annonce en cours pendant un spot
-    private int bande = -1;                  // numéro de la bande d'annonce en cours dans le spot
+    private int bande = -1;                  // numéro (absolu) de la bande d'annonce en cours dans le spot ; elles tournent si le spot est long
+    // Publicité regardée à la demande (touche sur une ligne « Publicité » du programme)
+    private static final long BANDE_MANUELLE_MS = 10_000L;
+    private int pubManuelle = -1;            // index du spot regardé à la demande (-1 : aucun)
+    private List<Prog> pubManuelleBandes = new ArrayList<>();
+    private int pubManuelleNum = 0;          // bande en cours dans la publicité à la demande
+    private long pubManuelleLecture = 0;     // instant où la bande en cours a vraiment commencé (0 : pas encore)
     private ProgressBar barre;
     private Button revoir, plein;
     private FrameLayout zone;
@@ -190,6 +202,8 @@ public class TvKouameActivity extends Activity {
         Ui.ajouter(c, titreProgramme, 20);
         programmeTxt = Ui.texte(this, "", 14, Ui.TXT2, false);
         Ui.ajouter(c, programmeTxt, 8);
+        programmeTxt.setMovementMethod(LinkMovementMethod.getInstance());   // les lignes « Publicité » sont cliquables
+        programmeTxt.setHighlightColor(0x33FFC857);
 
         infos = new ScrollView(this);
         infos.addView(c);
@@ -212,6 +226,7 @@ public class TvKouameActivity extends Activity {
         super.onResume();
         actif = true;
         if (player == null) creerLecteur();
+        pubManuelle = -1;
         differe = false;
         debutCourant = -1;                 // on revient au direct, à la bonne minute
         synchroniser(true);
@@ -220,6 +235,7 @@ public class TvKouameActivity extends Activity {
     @Override
     protected void onPause() {
         actif = false;
+        pubManuelle = -1;
         h.removeCallbacks(tickRun);
         generation++;
         if (tts != null) tts.stop();
@@ -254,6 +270,11 @@ public class TvKouameActivity extends Activity {
         player.addListener(new Player.Listener() {
             @Override
             public void onPlayerError(PlaybackException e) {
+                if (pubManuelle >= 0) {         // bande d'annonce illisible pendant une publicité à la demande : on passe à la suivante
+                    pubManuelleNum++;
+                    jouerBandeManuelle();
+                    return;
+                }
                 if (courant < 0 || courant >= progs.size()) return;
                 if (directCourant != null && variante + 1 < directCourant.variantes.size()) {   // autre façon de lire la même vidéo
                     variante++;
@@ -404,6 +425,13 @@ public class TvKouameActivity extends Activity {
         long off = p[1], debut = p[2];
         courant = idx;
 
+        if (pubManuelle >= 0) {                             // publicité regardée à la demande : le direct reprend à la fin
+            if (pubManuelle >= progs.size()) { finPubManuelle(); return; }
+            majAffichagePubManuelle();
+            h.postDelayed(tickRun, 1000);
+            return;
+        }
+
         boolean enLecture = player != null && (player.getPlaybackState() == Player.STATE_READY
                 || player.getPlaybackState() == Player.STATE_BUFFERING);
         boolean memeProgramme = debutCourant != -1 && jourMod(debut) == jourMod(debutCourant);
@@ -442,12 +470,18 @@ public class TvKouameActivity extends Activity {
         if (g.pub) {                                         // spot : la bande d'annonce du moment
             List<Prog> bs = bandesDe(idx);
             int b = bandeVoulue(idx, Math.max(0, maintenant() - debut));
-            if (b >= 0 && b < bs.size()) {
-                bande = b;
-                lue = bs.get(b);
-            } else {
-                lue = g;
+            if (b < 0 || bs.isEmpty()) {                     // plus aucun film à annoncer : message seul (on ne lit surtout pas le film d'avant)
+                lu = g;
+                listeProgramme(idx);
+                if (player != null) {
+                    player.stop();
+                    player.clearMediaItems();
+                }
+                voile(TEXTE_SECOURS_PUB);
+                return;
             }
+            bande = b;
+            lue = bs.get(b % bs.size());
         } else {
             lue = g;
         }
@@ -483,7 +517,7 @@ public class TvKouameActivity extends Activity {
         long depart;                                         // où commencer dans la vidéo lue
         if (g.pub && lue != g) {                             // bande d'annonce : elle commence à extraitMs dans le film
             long teff = bandeDuree(courant);
-            long dansBande = off - (long) bande * teff;
+            long dansBande = off % teff;                     // les bandes tournent : on est toujours dans l'une d'elles
             if (dansBande >= teff - 1500) {                  // cette bande est finie : la suivante prend le relais au prochain tick
                 voile(TEXTE_SECOURS_PUB);
                 return;
@@ -580,42 +614,31 @@ public class TvKouameActivity extends Activity {
         return null;
     }
 
-    /** Films et séries du jour, dans l'ordre du programme (les spots et les chansons n'en font pas partie). */
-    private List<Prog> filmsDuJour() {
-        List<Prog> l = new ArrayList<>();
-        for (Prog p : progs) if (!p.pub && ("film".equals(p.cat) || "serie".equals(p.cat))) l.add(p);
-        return l;
-    }
-
-    /** Bandes d'annonce d'un spot : TOUS les films/séries du jour, en commençant par le prochain film du programme. */
+    /**
+     * Bandes d'annonce d'un spot : les films et séries qui passent APRÈS ce spot et qui n'ont pas encore commencé.
+     * Un film ou une série déjà joué (ou en cours) est retiré de la liste, y compris pour les spots plus anciens.
+     */
     private List<Prog> bandesDe(int idxPub) {
-        List<Prog> tous = filmsDuJour();
         List<Prog> res = new ArrayList<>();
-        int m = tous.size();
-        if (m == 0) return res;
-        int depart = 0;
+        long now = maintenant();
         for (int i = idxPub + 1; i < progs.size(); i++) {
             Prog p = progs.get(i);
-            if (!p.pub && ("film".equals(p.cat) || "serie".equals(p.cat))) {
-                depart = Math.max(0, tous.indexOf(p));
-                break;
-            }
+            if (!p.pub && ("film".equals(p.cat) || "serie".equals(p.cat)) && p.debutMs > now) res.add(p);
         }
-        for (int j = 0; j < m; j++) res.add(tous.get((depart + j) % m));
         return res;
     }
 
-    /** Durée de chaque bande d'annonce d'un spot (10 s environ : durée du spot divisée par le nombre de films). */
+    /** Durée de chaque bande d'annonce d'un spot : durée du spot divisée par le nombre de films restants, entre 10 et 30 s. */
     private long bandeDuree(int idxPub) {
-        int m = Math.max(1, filmsDuJour().size());
-        return Math.max(1000, progs.get(idxPub).dureeMs / m);
+        int m = Math.max(1, bandesDe(idxPub).size());
+        long d = progs.get(idxPub).dureeMs / m;
+        return Math.max(1000, Math.min(d, 30_000L));
     }
 
-    /** Numéro de la bande d'annonce à montrer maintenant dans le spot (-1 s'il n'y a aucun film). */
+    /** Numéro (absolu) de la bande d'annonce à montrer maintenant dans le spot (-1 s'il ne reste aucun film à annoncer). */
     private int bandeVoulue(int idxPub, long off) {
-        int m = filmsDuJour().size();
-        if (m == 0) return -1;
-        return (int) Math.min(m - 1, Math.max(0, off) / bandeDuree(idxPub));
+        if (bandesDe(idxPub).isEmpty()) return -1;
+        return (int) (Math.max(0, off) / bandeDuree(idxPub));   // numéro absolu : après la dernière bande, on repart de la première
     }
 
     /** Spot publicitaire : message à l'écran + voix (une seule fois par spot, seulement si on le prend au début). */
@@ -692,23 +715,163 @@ public class TvKouameActivity extends Activity {
         }
     }
 
-    /** Programme complet de la journée : ✓ déjà passé, ▶ en cours, • à venir. */
+    /** Programme complet de la journée : ✓ déjà passé, ▶ en cours, • à venir. Les lignes « Publicité » se touchent pour les lire. */
     private void listeProgramme(int idxCourant) {
-        StringBuilder sb = new StringBuilder();
+        SpannableStringBuilder sb = new SpannableStringBuilder();
         for (int i = 0; i < progs.size(); i++) {
             Prog g = progs.get(i);
-            if (g.pub) continue;                              // les spots ne sont pas dans le programme affiché
             String marque = idxCourant < 0 ? "•" : (i < idxCourant ? "✓" : (i == idxCourant ? "▶" : "•"));
+            if (g.pub) {                                      // spot publicitaire : visible dans la liste, avec ses bandes d'annonce
+                final int idxPub = i;
+                List<Prog> bs = bandesDe(i);
+                int deb = sb.length();
+                sb.append(marque).append(' ').append(hm(g.debutMs)).append("  📣 Publicité TV Kouamé");
+                if (!bs.isEmpty()) sb.append(" · ").append(String.valueOf(bs.size())).append(bs.size() > 1 ? " bandes d'annonce, dès « " : " bande d'annonce : « ")
+                        .append(titreDe(bs.get(0))).append(" »");
+                sb.append(" (").append(Supabase.duree(g.dureeMs)).append(")");
+                if (!bs.isEmpty()) sb.append("  ▶ Lire");
+                sb.setSpan(new ClickableSpan() {
+                    @Override public void onClick(View v) { lirePubALaDemande(idxPub); }
+                    @Override public void updateDrawState(TextPaint ds) {
+                        ds.setColor(Ui.JAUNE);
+                        ds.setUnderlineText(false);
+                    }
+                }, deb, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                sb.append('\n');
+                continue;
+            }
             sb.append(marque).append(' ').append(g.debutMs < 0 ? "00h00" : hm(g.debutMs)).append("  ")
                     .append(titreDe(g)).append(g.debutMs < 0 ? " (suite)" : "")
                     .append(" (").append(Supabase.duree(g.dureeMs)).append(")\n");
         }
-        programmeTxt.setText(sb.length() == 0 ? "—" : sb.toString());
+        programmeTxt.setText(sb.length() == 0 ? (CharSequence) "—" : sb);
+    }
+
+    // ------------------------------------------------------------------ publicité à la demande
+
+    /**
+     * Touche sur une ligne « Publicité » du programme : on lit ses bandes d'annonce (10 s chacune), une après l'autre.
+     * Seuls les films et séries qui n'ont pas encore commencé y figurent. À la fin, le direct reprend tout seul.
+     */
+    private void lirePubALaDemande(int idxPub) {
+        if (player == null || !actif || idxPub < 0 || idxPub >= progs.size() || !progs.get(idxPub).pub) return;
+        List<Prog> bs = bandesDe(idxPub);
+        if (bs.isEmpty()) {
+            Toast.makeText(this, "Plus de bande d'annonce : tous les films de cette publicité sont déjà passés.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        pubManuelle = idxPub;
+        pubManuelleBandes = bs;
+        pubManuelleNum = 0;
+        differe = true;                                       // on quitte le direct ; le bouton propose « Revenir en direct »
+        if (tts != null && ttsPret) tts.speak(PHRASE_PUB, TextToSpeech.QUEUE_FLUSH, null, "pub");
+        majAffichagePubManuelle();
+        jouerBandeManuelle();
+    }
+
+    private void jouerBandeManuelle() {
+        if (pubManuelle < 0) return;
+        if (pubManuelleNum >= pubManuelleBandes.size()) {     // toutes les bandes ont passé : retour au direct
+            finPubManuelle();
+            return;
+        }
+        final Prog x = pubManuelleBandes.get(pubManuelleNum);
+        final int gen = ++generation;
+        lu = x;
+        pubManuelleLecture = 0;
+        majAffichagePubManuelle();
+        voile(TEXTE_SECOURS_PUB);
+        FbLien.Direct d = FbLien.deja(x.lien);
+        if (d != null) {
+            demarrerBandeManuelle(d, x, gen);
+            return;
+        }
+        new Thread(() -> {
+            final FbLien.Direct r = FbLien.resoudre(x.lien);
+            runOnUiThread(() -> {
+                if (gen != generation || !actif || pubManuelle < 0) return;
+                if (r == null) {                              // lien indisponible : bande suivante
+                    pubManuelleNum++;
+                    jouerBandeManuelle();
+                } else {
+                    demarrerBandeManuelle(r, x, gen);
+                }
+            });
+        }).start();
+    }
+
+    private void demarrerBandeManuelle(FbLien.Direct d, Prog x, int gen) {
+        if (gen != generation || !actif || player == null || pubManuelle < 0) return;
+        Map<String, String> entetes = new HashMap<>();
+        entetes.put("Referer", "https://www.facebook.com/");
+        DefaultHttpDataSource.Factory f = new DefaultHttpDataSource.Factory()
+                .setUserAgent(d.ua)
+                .setAllowCrossProtocolRedirects(true)
+                .setConnectTimeoutMs(15000)
+                .setReadTimeoutMs(20000)
+                .setDefaultRequestProperties(entetes);
+        String[] v = d.variantes.get(0);
+        ProgressiveMediaSource.Factory usine = new ProgressiveMediaSource.Factory(f);
+        MediaSource src = usine.createMediaSource(MediaItem.fromUri(v[0]));
+        if (v[1] != null) src = new MergingMediaSource(src, usine.createMediaSource(MediaItem.fromUri(v[1])));
+        player.setVolume(pubManuelleNum == 0 ? 0.35f : 1f);   // au début, la voix « TV Kouamé… » passe par-dessus
+        player.setMediaSource(src, x.extraitMs);
+        player.prepare();
+        player.play();
+        suivreBandeManuelle(gen, SystemClock.elapsedRealtime());
+    }
+
+    /** Passe à la bande suivante après 10 s de lecture réelle (ou si la bande ne démarre pas au bout de 25 s). */
+    private void suivreBandeManuelle(final int gen, final long t0) {
+        h.postDelayed(() -> {
+            if (gen != generation || !actif || pubManuelle < 0) return;
+            long t = SystemClock.elapsedRealtime();
+            if (pubManuelleLecture == 0 && player != null && player.getPlaybackState() == Player.STATE_READY) pubManuelleLecture = t;
+            boolean finie = (pubManuelleLecture > 0 && t - pubManuelleLecture >= BANDE_MANUELLE_MS) || t - t0 >= 25_000L;
+            if (finie) {
+                pubManuelleNum++;
+                jouerBandeManuelle();
+            } else {
+                suivreBandeManuelle(gen, t0);
+            }
+        }, 500);
+    }
+
+    /** Fin (ou arrêt) de la publicité à la demande : le direct reprend à la bonne minute. */
+    private void finPubManuelle() {
+        pubManuelle = -1;
+        pubManuelleBandes = new ArrayList<>();
+        pubManuelleNum = 0;
+        generation++;
+        differe = false;
+        debutCourant = -1;                                    // le prochain tick relance le direct
+        pubVue.setVisibility(View.GONE);
+        if (player != null) {
+            player.stop();
+            player.clearMediaItems();
+        }
+        tick();
+    }
+
+    private void majAffichagePubManuelle() {
+        int n = pubManuelleBandes.size();
+        Prog x = pubManuelleNum < n ? pubManuelleBandes.get(pubManuelleNum) : null;
+        etat.setText("📣 PUBLICITÉ · à la demande");
+        titreV.setText(x != null ? "🎬 Bande d'annonce : " + titreDe(x) : "📣 Publicité TV Kouamé");
+        heure.setText("Bande " + Math.min(pubManuelleNum + 1, Math.max(1, n)) + " sur " + n);
+        barre.setProgress(n == 0 ? 0 : (int) (1000L * pubManuelleNum / n));
+        suivant.setText("Le direct reprend à la fin de la publicité.");
+        revoir.setText("🔴 Revenir en direct");
+        pubVue.setVisibility(View.VISIBLE);
     }
 
     // ------------------------------------------------------------------ boutons
 
     private void basculerDifferePlusDirect() {
+        if (pubManuelle >= 0) {                           // publicité à la demande en cours : on revient au direct
+            finPubManuelle();
+            return;
+        }
         if (player == null || courant < 0) return;
         if (progs.get(courant).pub) return;               // pas de « revoir depuis le début » pendant un spot publicitaire
         if (differe) {

@@ -146,6 +146,7 @@ public class MainActivity extends Activity {
         def(liste, "jeux", "🎮", "JEUX", "Panda Dash, Super Kouamé, Serpent, Commando, Liquide et Combat Mortel", 0xFF8E24AA, 0xFFFF5252, JeuxActivity.class);
         def(liste, "accords", "🎼", "Accords & Musique", "Analyser un morceau, créer une chanson, séparer les voix", 0xFF6D4AFF, 0xFFC13FD6, AccordsHomeActivity.class);
         def(liste, "scolaire", "📚", "Exposés & exercices", "Préparer un exposé et réviser les matières scolaires", 0xFF167D8D, 0xFF36B37E, ScolaireActivity.class);
+        def(liste, "pharmacie", "💊", "Pharmacies de garde", "Bénin : départements, communes, villes et villages", 0xFF1E9E5A, 0xFF16A085, PharmacieActivity.class);
         def(liste, "facebook", "📘", "Télécharger Facebook", "Une vidéo Facebook, en qualité standard ou HD", 0xFF1877F2, 0xFF5B3DF5, FacebookActivity.class);
         def(liste, "telechargements", "📥", "Téléchargements", "Facebook, galerie et liens, classés à part", 0xFF2E9E73, 0xFF9BCB3C, HorsLigneActivity.class);
         def(liste, "compilateur", "🛠", "Compiler un projet", "Zip Android → APK à télécharger", 0xFF16A085, 0xFF2D8CFF, CompilateurActivity.class);
@@ -327,6 +328,9 @@ public class MainActivity extends Activity {
                 case "accords":
                 case "scolaire":
                     groupe = "CRÉER & APPRENDRE";
+                    break;
+                case "pharmacie":
+                    groupe = "SERVICES";
                     break;
                 case "facebook":
                 case "telechargements":

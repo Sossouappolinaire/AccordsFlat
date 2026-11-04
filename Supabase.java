@@ -680,4 +680,46 @@ final class Supabase {
             return false;
         }
     }
+
+    // ---------- Canaux Telegram (page web avec bouton « Ouvrir », voir canaux_telegram dans la base) ----------
+
+    /** Admin : liste des canaux Telegram enregistrés, ou null. */
+    static JSONArray adminCanauxListe() {
+        try {
+            String r = rest("POST", "rpc/admin_canaux_liste", "{}", null);
+            return r == null ? null : new JSONArray(r);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Admin : ajoute un canal (nom + lien d'invitation t.me). Renvoie l'objet créé (avec « code »), ou null. */
+    static JSONObject adminCanalAjouter(String nom, String lien) {
+        try {
+            String r = rest("POST", "rpc/admin_canal_ajouter", new JSONObject().put("p_nom", nom).put("p_lien", lien).toString(), null);
+            return r == null ? null : new JSONObject(r);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Admin : modifie le nom et le lien d'un canal (le code du lien partagé ne change pas). */
+    static JSONObject adminCanalModifier(String id, String nom, String lien) {
+        try {
+            String r = rest("POST", "rpc/admin_canal_modifier",
+                    new JSONObject().put("p_id", id).put("p_nom", nom).put("p_lien", lien).toString(), null);
+            return r == null ? null : new JSONObject(r);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Admin : supprime un canal (son lien partagé cesse de fonctionner). */
+    static boolean adminCanalSupprimer(String id) {
+        try {
+            return rest("POST", "rpc/admin_canal_supprimer", new JSONObject().put("p_id", id).toString(), null) != null;
+        } catch (Exception e) {
+            return false;
+        }
+    }
 }
