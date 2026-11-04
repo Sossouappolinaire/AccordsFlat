@@ -146,6 +146,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".CanauxTelegramActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".AdminTvActivity"
             android:exported="false" />
 
@@ -262,6 +266,7 @@
             android:name=".ExercicesActivity"
             android:exported="false" />
 
+        <activity android:name=".PharmacieActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <!-- STOCK MASSIERS (intégré) : ouvert depuis l'écran de connexion avec un numéro + PIN -->
         <activity android:name=".StockHomeActivity" android:exported="false" />
         <activity android:name=".StockProductionActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
@@ -270,6 +275,7 @@
         <activity android:name=".StockHistoryActivity" android:exported="false" />
         <activity android:name=".StockBilanActivity" android:exported="false" />
         <activity android:name=".StockAccountsActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".StockSecretariatActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
 
     </application>
 </manifest>

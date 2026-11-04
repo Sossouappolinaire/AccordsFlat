@@ -115,6 +115,11 @@ public class AdminActivity extends Activity {
         videTv.setOnClickListener(v -> viderTv());
         Ui.ajouter(c, videTv, 8);
 
+        Ui.ajouter(c, Ui.texte(this, "📣 Canaux Telegram", 18, Ui.TXT, true), 22);
+        Button canaux = Ui.bouton(this, "📣 Liens vers les canaux Telegram", Ui.ACCENT);
+        canaux.setOnClickListener(v -> startActivity(new Intent(this, CanauxTelegramActivity.class)));
+        Ui.ajouter(c, canaux, 8);
+
         Ui.ajouter(c, Ui.texte(this, "Dépanner un compte (série perdue, mot de passe oublié)", 16, Ui.TXT, true), 22);
         cibleEmail = Ui.champ(this, "Email du compte");
         cibleEmail.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);

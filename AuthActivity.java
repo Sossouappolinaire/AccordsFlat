@@ -541,11 +541,13 @@ public class AuthActivity extends Activity {
             runOnUiThread(() -> {
                 occupe(false);
                 if (r == null) { info(panne, true); return; }
-                if (!r.optBoolean("ok") || !"OWNER".equals(r.optString("role"))) {
+                final String role = r.optString("role");
+                if (!r.optBoolean("ok") || !("OWNER".equals(role) || "SECRETARY".equals(role))) {
                     info(r.optString("erreur", "Numéro ou PIN incorrect."), true);
                     return;
                 }
-                StockSession.ouvrir("OWNER", num, r.optString("nom"), code);
+                StockSession.ouvrir(role, num, r.optString("nom"), code);
+                StockSession.massier = r.optString("massier");
                 Intent i = new Intent(this, StockHomeActivity.class);
                 i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
                 startActivity(i);
