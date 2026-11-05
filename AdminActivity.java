@@ -57,6 +57,10 @@ public class AdminActivity extends Activity {
         majTxt = Ui.texte(this, "", 13, Ui.TXT2, false);
         Ui.ajouter(c, majTxt, 6);
 
+        Button dl = Ui.bouton(this, "📥 Téléchargements des films et séries", Ui.ACCENT);
+        dl.setOnClickListener(v -> startActivity(new Intent(this, AdminTelechargementsActivity.class)));
+        Ui.ajouter(c, dl, 8);
+
         Button carriere = Ui.bouton(this, "⛏ Gestion de la carrière", Ui.ACCENT);
         carriere.setOnClickListener(v -> {
             StockSession.ouvrir("ADMIN", "", Compte.nom(), "");
@@ -119,6 +123,10 @@ public class AdminActivity extends Activity {
         Button canaux = Ui.bouton(this, "📣 Liens vers les canaux Telegram", Ui.ACCENT);
         canaux.setOnClickListener(v -> startActivity(new Intent(this, CanauxTelegramActivity.class)));
         Ui.ajouter(c, canaux, 8);
+
+        Button retraitsQuiz = Ui.bouton(this, "💰 Retraits du jeu Questions pour un champion", Ui.VERT);
+        retraitsQuiz.setOnClickListener(v -> startActivity(new Intent(this, QuizRetraitsActivity.class)));
+        Ui.ajouter(c, retraitsQuiz, 8);
 
         Ui.ajouter(c, Ui.texte(this, "Dépanner un compte (série perdue, mot de passe oublié)", 16, Ui.TXT, true), 22);
         cibleEmail = Ui.champ(this, "Email du compte");

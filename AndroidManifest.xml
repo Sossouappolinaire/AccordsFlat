@@ -150,7 +150,15 @@
             android:exported="false" />
 
         <activity
+            android:name=".QuizRetraitsActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".AdminTvActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".AdminTelechargementsActivity"
             android:exported="false" />
 
         <activity
@@ -215,6 +223,11 @@
 
         <activity
             android:name=".JeuLiquideActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
+            android:name=".JeuQuizActivity"
             android:exported="false"
             android:screenOrientation="portrait" />
 
