@@ -80,6 +80,19 @@ public class StockUi {
         return e;
     }
 
+    /** Menu déroulant (barre de défilement) d'une liste de noms. */
+    public static android.widget.Spinner spinner(Context c, java.util.List<String> items, String selected) {
+        android.widget.Spinner s = new android.widget.Spinner(c);
+        s.setAdapter(new android.widget.ArrayAdapter<String>(c, android.R.layout.simple_spinner_dropdown_item, items));
+        if (selected != null) { int i = items.indexOf(selected); if (i >= 0) s.setSelection(i); }
+        GradientDrawable g = shape(c, 0xFFF3F4F6, 12);
+        g.setStroke(dp(c, 1), 0xFFE5E7EB);
+        s.setBackground(g);
+        s.setPadding(dp(c, 10), dp(c, 8), dp(c, 10), dp(c, 8));
+        s.setLayoutParams(lp(c, -1, dp(c, 54), 0, 10, 0, 0));
+        return s;
+    }
+
     public static EditText num(Context c, String hint) { return et(c, hint, InputType.TYPE_CLASS_NUMBER); }
 
     public static LinearLayout card(Context c) {

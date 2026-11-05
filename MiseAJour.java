@@ -83,18 +83,45 @@ final class MiseAJour {
         new Thread(() -> {
             final JSONObject r = Supabase.majDerniere();
             derniere = r;
+            final String panne = diagnostic(r);
             a.runOnUiThread(() -> {
                 if (a.isFinishing()) return;
-                if (r == null || !r.optBoolean("ok")) {
-                    if (manuel) Toast.makeText(a, "Impossible de consulter la base : vérifiez internet.", Toast.LENGTH_LONG).show();
+                if (panne != null) {
+                    if (manuel) Toast.makeText(a, "⚠ Base non connectée : " + panne, Toast.LENGTH_LONG).show();
                 } else if (disponible(a, r)) {
                     if (manuel) proposer(a, r);
                     else verifierAvecReponse(a, r);
                 } else if (manuel) {
-                    Toast.makeText(a, "✅ Vous avez déjà la dernière version (" + nomInstalle(a) + ").", Toast.LENGTH_LONG).show();
+                    Toast.makeText(a, "✅ Connecté à la base. Vous avez déjà la dernière version (" + nomInstalle(a) + ")."
+                            + derniereResume(r), Toast.LENGTH_LONG).show();
                 }
             });
         }).start();
+    }
+
+    /**
+     * Vérifie que le bouton « mise à jour » est bien relié à la base : renvoie null si la réponse de la base est bonne,
+     * sinon la cause précise de la panne (pas de compte, clé absente, section10 non appliquée, session expirée, pas d'internet…).
+     */
+    static String diagnostic(JSONObject r) {
+        if (r != null && r.optBoolean("ok")) return null;
+        String e = Supabase.derniereErreur == null ? "" : Supabase.derniereErreur;
+        if (!Supabase.configure() || "CLE_MANQUANTE".equals(e)) return "la clé de la base manque dans cette version de l'appli.";
+        if (!Compte.connecte()) return "vous n'êtes pas connecté à votre compte.";
+        if (e.contains("http 404")) return "la fonction maj_derniere n'existe pas dans la base (exécutez section10_mise_a_jour_apk.sql dans Supabase).";
+        if (e.contains("http 401") || e.contains("http 403")) return "session expirée ou refusée : déconnectez-vous puis reconnectez-vous.";
+        if (e.startsWith("Connexion impossible")) return "pas d'internet ou base injoignable.";
+        if (e.contains("http")) return "la base a refusé la demande (" + e + ").";
+        return r == null ? "aucune réponse de la base." : "réponse inattendue de la base.";
+    }
+
+    /** Dernière version publiée dans la base, en une phrase (vide s'il n'y en a aucune). */
+    static String derniereResume(JSONObject r) {
+        if (r == null || !r.optBoolean("ok")) return "";
+        if (r.optBoolean("aucune")) return "\nAucune version publiée dans la base pour l'instant.";
+        String t = r.optLong("taille", 0L) > 0 ? " · " + Supabase.taille(r.optLong("taille", 0L)) : "";
+        return "\nDernière version publiée : " + r.optString("version_name", "?") + " · sortie le "
+                + Config.date(r.optLong("cree_ms", 0L)) + t;
     }
 
     /**
@@ -326,6 +353,11 @@ final class MiseAJour {
             }
             return "Installation impossible : " + (e.getMessage() == null ? "erreur inconnue" : e.getMessage());
         }
+    }
+
+    /** Une fois la nouvelle version installée, l'APK téléchargé (ancien fichier de mise à jour) est supprimé du téléphone. */
+    static void nettoyerApkTelecharge(Context c) {
+        supprimerContenu(new File(c.getCacheDir(), "maj"));
     }
 
     private static void supprimerContenu(File d) {

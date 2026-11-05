@@ -4,6 +4,12 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import org.json.JSONObject;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 import android.text.InputType;
 import android.view.Gravity;
 import android.widget.Button;
@@ -17,6 +23,47 @@ import android.widget.Toast;
 public class ParametresActivity extends Activity {
 
     private LinearLayout securite;
+    private TextView etatMaj;
+    private final Handler h = new Handler(Looper.getMainLooper());
+    private boolean actif = false;
+    /** Relit la base toutes les 15 secondes tant que cet écran est ouvert : l'état affiché suit la base en temps réel. */
+    private final Runnable surveillerMaj = new Runnable() {
+        @Override public void run() {
+            if (!actif) return;
+            new Thread(() -> {
+                final JSONObject r = Supabase.majDerniere();
+                MiseAJour.derniere = r;
+                final String panne = MiseAJour.diagnostic(r);
+                runOnUiThread(() -> {
+                    if (isFinishing() || etatMaj == null) return;
+                    String heure = new SimpleDateFormat("HH:mm:ss", Locale.FRANCE).format(new Date());
+                    if (panne != null) {
+                        etatMaj.setText("🔴 Base non connectée : " + panne + "\nDernier essai à " + heure);
+                    } else {
+                        String base = "🟢 Connecté à la base · vérifié à " + heure + MiseAJour.derniereResume(r);
+                        etatMaj.setText(MiseAJour.disponible(ParametresActivity.this, r)
+                                ? base + "\n🆕 Nouvelle version disponible : touchez « Chercher une mise à jour »." : base);
+                    }
+                });
+            }).start();
+            h.postDelayed(this, 15000);
+        }
+    };
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        actif = true;
+        h.removeCallbacks(surveillerMaj);
+        h.post(surveillerMaj);
+    }
+
+    @Override
+    protected void onPause() {
+        actif = false;
+        h.removeCallbacks(surveillerMaj);
+        super.onPause();
+    }
 
     @Override
     protected void onCreate(Bundle b) {
@@ -60,6 +107,8 @@ public class ParametresActivity extends Activity {
         maj.addView(Ui.texte(this, "Version installée : " + MiseAJour.nomInstalle(this), 14, Ui.TXT, false), Ui.lp(this, -1, -2, 0f, 8, 0));
         maj.addView(Ui.texte(this, "Quand une nouvelle version sort, touchez « Mettre à jour » : elle remplace l'ancienne, sans désinstaller.",
                 13, Ui.TXT2, false), Ui.lp(this, -1, -2, 0f, 4, 0));
+        etatMaj = Ui.texte(this, "⏳ Connexion à la base…", 13, Ui.TXT, true);
+        maj.addView(etatMaj, Ui.lp(this, -1, -2, 0f, 10, 0));
         Button chercherMaj = Ui.bouton(this, "🔍 Chercher une mise à jour", Ui.VERT);
         chercherMaj.setOnClickListener(v -> MiseAJour.verifier(this, true));
         maj.addView(chercherMaj, Ui.lp(this, -1, -2, 0f, 12, 0));

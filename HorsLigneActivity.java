@@ -157,6 +157,8 @@ public class HorsLigneActivity extends Activity {
             r.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
             r.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_MOVIES, nom);
             ((DownloadManager) getSystemService(DOWNLOAD_SERVICE)).enqueue(r);
+            final String lienCompte = url;
+            new Thread(() -> Supabase.compterTelechargement(lienCompte)).start();   // visible par l'administrateur
             Toast.makeText(this, "Téléchargement lancé. Retrouvez-le dans « Autres téléchargements ».",
                     Toast.LENGTH_LONG).show();
         } catch (Exception e) {

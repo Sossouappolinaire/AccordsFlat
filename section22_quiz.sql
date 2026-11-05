@@ -1,0 +1,28 @@
+-- 22) JEU « Questions pour un champion » (déjà appliqué sur le projet Supabase le 04/11/2026)
+--
+-- Contenu appliqué :
+--   * scores_jeux : la clé de jeu « quiz » (et foot / pes) est autorisée, enregistrer_score() mise à jour
+--   * quiz_questions (id, bonne)       : 126 questions ; les textes sont dans QuizBanque.java (même numéro)
+--   * quiz_salons / quiz_joueurs / quiz_reponses : salons du jeu en ligne (RLS activée, aucun accès direct)
+--   * fonctions (réservées aux comptes connectés) : quiz_creer, quiz_salons_ouverts, quiz_rejoindre, quiz_quitter,
+--     quiz_demarrer, quiz_etat, quiz_repondre, quiz_revele
+--
+-- Règles : salon de 2 à 8 joueurs ; 10 questions ; 25 s max par question, 4 s de pause ; 22 s d annonce des règles avant le début.
+-- Points calculés par le serveur : 10 par bonne réponse + jusqu'à 10 de bonus de rapidité.
+-- Pour ajouter des questions : ajouter la ligne dans QuizBanque.java (TEXTES et BONNES) ET insérer (id, bonne) dans quiz_questions.
+
+-- Points gagnés et retraits (appliqué le 05/11/2026) :
+--   * quiz_regles      : gain_victoire = 25, max_victoires_jour = 5, min_reponses = 5 (modifiables par SQL)
+--   * quiz_gains       : solde de points gagnés de chaque joueur (1 point = 1 F), distinct du score du jeu
+--   * quiz_victoires   : une ligne par partie terminée (gagnant, points, motif) : une partie ne paie qu'une fois
+--   * quiz_retraits    : demandes (pays, numéro, nom, prénom, montant) ; une seule en attente par joueur
+--   * fonctions : quiz_mes_gains, quiz_retrait_demander, admin_quiz_retraits, admin_quiz_retrait_traiter (administrateur)
+-- Gain : le premier d'une partie de 10 questions, seul en tête, avec au moins 2 joueurs ayant répondu à 5 questions.
+-- Pas de gain en cas d'égalité, de score nul ou si le joueur a déjà 5 victoires payées dans les dernières 24 h.
+
+-- Règle « premier à cliquer » (appliquée le 05/11/2026) :
+--   * un seul joueur marque 1 point par question : le premier dont la bonne réponse arrive au serveur ;
+--     la question se ferme alors pour tous (4 s de pause, puis question suivante) ;
+--   * une mauvaise réponse empêche de répondre de nouveau à cette question ; si tous se trompent, la question se ferme ;
+--   * à la fin (10 questions), le plus de points gagne les points gagnés ; égalité de points : le plus rapide sur ses bonnes réponses ;
+--   * l'état de la partie (question en cours, gagnant) est tenu par le serveur : fonction _quiz_avancer().

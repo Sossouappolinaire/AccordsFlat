@@ -159,20 +159,20 @@ public class StockSecretariatActivity extends StockBaseActivity {
     private void renderAdmin() {
         body.addView(StockUi.sectionTitle(this, "Ajouter une ligne", StockUi.GREEN));
         LinearLayout f = StockUi.card(this);
-        final EditText m = StockUi.et(this, "Massier", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
+        final List<String> liste = db.massiersListe();
+        final Spinner m = StockUi.spinner(this, liste, null);
         final EditText nm = StockUi.et(this, "Nom du producteur", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
         final EditText a = StockUi.num(this, "Nombre de 5/15  (" + StockDb.PRIX_515 + " F l'unité)");
         final EditText c = StockUi.num(this, "Nombre de 5/10  (" + StockDb.PRIX_510 + " F l'unité)");
-        List<String> ms = db.massiers();
-        if (!ms.isEmpty()) f.addView(StockUi.tv(this, "Massiers enregistrés : " + android.text.TextUtils.join(", ", ms), 12, StockUi.GRAY, false));
+        f.addView(StockUi.tv(this, liste.isEmpty() ? "Aucun massier : ajoutez-en d'abord dans Comptes." : "Massier (choisi dans la liste)", 12, StockUi.GRAY, false));
         Button add = StockUi.btn(this, "Ajouter la ligne", StockUi.GREEN);
         f.addView(m); f.addView(nm); f.addView(a); f.addView(c); f.addView(add);
         body.addView(f);
         add.setOnClickListener(v -> {
-            final String mas = m.getText().toString().trim().replaceAll("\\s+", " ");
+            if (liste.isEmpty()) { toast("Ajoutez d'abord un massier dans Comptes"); return; }
+            final String mas = String.valueOf(m.getSelectedItem());
             final String name = nm.getText().toString().trim().replaceAll("\\s+", " ");
             final int n15 = parse(a), n10 = parse(c);
-            if (mas.isEmpty()) { toast("Entrez le massier"); return; }
             if (name.isEmpty()) { toast("Entrez le nom du producteur"); return; }
             if (n15 == 0 && n10 == 0) { toast("Entrez au moins une quantité"); return; }
             envoyer(v, () -> db.secretariatAjouter(mas, name, n15, n10),

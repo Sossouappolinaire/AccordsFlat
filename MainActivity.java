@@ -294,6 +294,7 @@ public class MainActivity extends Activity {
             // Nouvelle version de l'application (APK dans la base) : bandeau + fenêtre « Mettre à jour » avec la date de sortie.
             final JSONObject maj = Supabase.majDerniere();
             MiseAJour.derniere = maj;
+            if (maj != null && maj.optBoolean("ok") && !MiseAJour.disponible(this, maj)) MiseAJour.nettoyerApkTelecharge(this);
             runOnUiThread(() -> {
                 if (isFinishing()) return;
                 afficherBandeauMaj();

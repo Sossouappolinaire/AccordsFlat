@@ -40,7 +40,7 @@ public class StockHomeActivity extends StockBaseActivity {
         stats.addView(StockUi.statBox(this, "Stock 5/15", String.valueOf(p[0] - s[0]), StockUi.BLUE));
         stats.addView(StockUi.statBox(this, "Stock 5/10", String.valueOf(p[1] - s[1]), StockUi.TEAL));
         long[] wk = db.weeklySales().get(0);
-        stats.addView(StockUi.statBox(this, "Vendu semaine", (wk[1] + wk[2]) + " vendus", StockUi.GREEN));
+        stats.addView(StockUi.statBox(this, "Vendu semaine", String.valueOf(wk[1] + wk[2]), StockUi.GREEN));
         body.addView(stats);
 
         body.addView(StockUi.sectionTitle(this, "Menu principal", StockUi.INDIGO));
@@ -56,7 +56,7 @@ public class StockHomeActivity extends StockBaseActivity {
         } else if (StockSession.admin()) {
             View prod = StockUi.tile(this, "🧱", "Production", "Ajouter par massier", StockUi.GREEN, v -> go(StockProductionActivity.class));
             View sales = StockUi.tile(this, "💰", "Ventes", "Ajoutées par le propriétaire", StockUi.ORANGE, v -> go(StockSalesActivity.class));
-            View acc = StockUi.tile(this, "👤", "Comptes", "Créer le propriétaire", StockUi.PINK, v -> go(StockAccountsActivity.class));
+            View acc = StockUi.tile(this, "👤", "Comptes", "Massiers, propriétaire, secrétaire", StockUi.PINK, v -> go(StockAccountsActivity.class));
             body.addView(row(prod, sales));
             body.addView(row(stock, bilan));
             body.addView(row(hist, acc));

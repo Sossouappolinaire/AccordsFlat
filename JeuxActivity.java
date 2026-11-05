@@ -21,7 +21,7 @@ public class JeuxActivity extends Activity {
 
     private static final String PREFS = "jeux";
 
-    private static final String[] JEUX = {"panda", "mario", "serpent", "commando", "liquide", "motard", "foot", "pes"};
+    private static final String[] JEUX = {"panda", "mario", "serpent", "commando", "liquide", "motard", "foot", "pes", "quiz"};
 
     /** Par jeu : [0] mon record, [1] meilleur joueur de tous les joueurs. */
     private final HashMap<String, TextView[]> champs = new HashMap<>();
@@ -71,6 +71,11 @@ public class JeuxActivity extends Activity {
                 "Un jeu de plateformes comme Mario : briques, tuyaux, champignons méchants et niveaux de plus en plus durs.",
                 0xFFD32F2F, 0xFFFF9800,
                 new Intent(this, JeuPlateformeActivity.class).putExtra("mode", "mario"));
+
+        carte(root, "quiz", "🧠", "Questions pour un champion",
+                "Quiz de culture générale : les 4 réponses sont lues à voix haute. Joue seul ou en ligne contre les autres joueurs.",
+                0xFF6A1B9A, 0xFF1565C0,
+                new Intent(this, JeuQuizActivity.class));
 
         carte(root, "serpent", "🐍", "Serpent",
                 "Glissez le doigt pour tourner, mangez les pommes, ne touchez ni les murs ni votre queue.",

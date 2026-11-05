@@ -212,6 +212,63 @@ public abstract class StockBaseActivity extends Activity {
         TextView d = StockUi.tv(this, e[4] + "  •  " + e[5], 12, StockUi.GRAY, false);
         d.setPadding(0, StockUi.dp(this, 6), 0, 0);
         c.addView(d);
+        if (StockSession.admin() && e.length > 6) {
+            final String[] ee = e;
+            LinearLayout b = new LinearLayout(this);
+            b.addView(petitBouton("Modifier", StockUi.BLUE, v -> modifierOperation(v, ee)));
+            b.addView(petitBouton("Supprimer", StockUi.RED, v -> supprimerOperation(v, ee)));
+            c.addView(b);
+        }
         return c;
+    }
+
+    private TextView petitBouton(String texte, int couleur, View.OnClickListener l) {
+        TextView t = StockUi.pill(this, texte, couleur);
+        t.setTextSize(13);
+        t.setLayoutParams(StockUi.lp(this, -2, -2, 0, 10, 10, 0));
+        t.setPadding(StockUi.dp(this, 16), StockUi.dp(this, 8), StockUi.dp(this, 16), StockUi.dp(this, 8));
+        t.setOnClickListener(l);
+        return t;
+    }
+
+    /** Administrateur : corrige une production ou une vente (massier choisi dans la liste, 5/15, 5/10). */
+    protected void modifierOperation(final View src, final String[] e) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int pd = StockUi.dp(this, 20);
+        box.setPadding(pd, pd / 2, pd, 0);
+        List<String> ms = new ArrayList<>(db.massiersListe());
+        if (!ms.contains(e[1])) ms.add(e[1]);
+        final Spinner sp = StockUi.spinner(this, ms, e[1]);
+        final EditText a = StockUi.num(this, "Nombre de 5/15");
+        final EditText c = StockUi.num(this, "Nombre de 5/10");
+        a.setText(e[2]); c.setText(e[3]);
+        box.addView(sp); box.addView(a); box.addView(c);
+        final boolean prod = StockDb.PROD.equals(e[0]);
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(prod ? "Modifier la production" : "Modifier la vente")
+                .setView(box)
+                .setNegativeButton("Annuler", null)
+                .setPositiveButton("Enregistrer", (dlg, w) -> {
+                    final String mas = String.valueOf(sp.getSelectedItem());
+                    final int n15 = parse(a), n10 = parse(c);
+                    if (n15 == 0 && n10 == 0) { toast("Entrez au moins une quantité"); return; }
+                    final long id = Long.parseLong(e[6]);
+                    envoyer(src, () -> db.operationModifier(id, mas, n15, n10),
+                            "✔ Modifié le " + StockDb.now() + "\n" + mas + " — 5/15 : " + n15 + "  |  5/10 : " + n10);
+                })
+                .show();
+    }
+
+    protected void supprimerOperation(final View src, final String[] e) {
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Supprimer cette ligne ?")
+                .setMessage(e[1] + " — 5/15 : " + e[2] + "  |  5/10 : " + e[3] + "\n" + e[4])
+                .setNegativeButton("Annuler", null)
+                .setPositiveButton("Supprimer", (dlg, w) -> {
+                    final long id = Long.parseLong(e[6]);
+                    envoyer(src, () -> db.operationSupprimer(id), "✔ Ligne supprimée le " + StockDb.now());
+                })
+                .show();
     }
 }

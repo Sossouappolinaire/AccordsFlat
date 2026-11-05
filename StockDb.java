@@ -33,6 +33,8 @@ public class StockDb {
     private static volatile List<String[]> secretariat = new ArrayList<>();
     /** Comptes secrétaire : téléphone, nom et prénom, massier, date de création (administrateur seulement). */
     private static volatile List<String[]> secretaires = new ArrayList<>();
+    /** Massiers enregistrés par l'administrateur (administrateur seulement). */
+    private static volatile List<String> massiersRegistre = new ArrayList<>();
     private static volatile boolean pret = false;
 
     public StockDb(Context c) { }
@@ -44,6 +46,7 @@ public class StockDb {
         proprietaires = new ArrayList<>();
         secretariat = new ArrayList<>();
         secretaires = new ArrayList<>();
+        massiersRegistre = new ArrayList<>();
         pret = false;
     }
 
@@ -95,7 +98,8 @@ public class StockDb {
                 JSONObject o = a.getJSONObject(i);
                 String par = o.optString("par", "") + ("ADMIN".equals(o.optString("role")) ? " (Administrateur)" : " (Propriétaire)");
                 e.add(new String[]{o.optString("type"), o.optString("massier"),
-                        String.valueOf(o.optInt("n15")), String.valueOf(o.optInt("n10")), o.optString("ts"), par});
+                        String.valueOf(o.optInt("n15")), String.valueOf(o.optInt("n10")), o.optString("ts"), par,
+                        String.valueOf(o.optLong("id"))});
             }
             List<String[]> p = new ArrayList<>();
             JSONArray b = r.optJSONArray("proprietaires");
@@ -118,6 +122,10 @@ public class StockDb {
                 JSONObject o = d.getJSONObject(i);
                 se.add(new String[]{o.optString("tel"), o.optString("nom"), o.optString("massier"), o.optString("cree")});
             }
+            List<String> mr = new ArrayList<>();
+            JSONArray mj = r.optJSONArray("massiers");
+            for (int i = 0; mj != null && i < mj.length(); i++) mr.add(mj.getString(i));
+            massiersRegistre = mr;
             entrees = e;
             secretariat = sc;
             secretaires = se;
@@ -193,6 +201,47 @@ public class StockDb {
     }
 
     // ------------------------------------------------------------------ lecture (copie en mémoire)
+
+    // ------------------------------------------------------------------ massiers et stock (administrateur)
+
+    /** Ajoute un massier à la liste (administrateur seulement). */
+    public String massierAjouter(String nom) {
+        try { return reponse("stock_massier_ajouter", new JSONObject().put("p_nom", nom)); }
+        catch (Exception e) { return "Erreur : " + e.getMessage(); }
+    }
+
+    public String massierSupprimer(String nom) {
+        try { return reponse("stock_massier_supprimer", new JSONObject().put("p_nom", nom)); }
+        catch (Exception e) { return "Erreur : " + e.getMessage(); }
+    }
+
+    /** Modifie une production ou une vente : massier, 5/15, 5/10. */
+    public String operationModifier(long id, String massier, int n15, int n10) {
+        try {
+            return reponse("stock_operation_modifier", new JSONObject().put("p_id", id)
+                    .put("p_massier", massier).put("p_n15", n15).put("p_n10", n10));
+        } catch (Exception e) { return "Erreur : " + e.getMessage(); }
+    }
+
+    public String operationSupprimer(long id) {
+        try { return reponse("stock_operation_supprimer", new JSONObject().put("p_id", id)); }
+        catch (Exception e) { return "Erreur : " + e.getMessage(); }
+    }
+
+    /** Fixe le stock restant sur le terrain d'un massier (produit - vendu). */
+    public String stockFixer(String massier, int n15, int n10) {
+        try {
+            return reponse("stock_fixer", new JSONObject().put("p_massier", massier).put("p_n15", n15).put("p_n10", n10));
+        } catch (Exception e) { return "Erreur : " + e.getMessage(); }
+    }
+
+    /** Massiers enregistrés par l'administrateur, plus ceux qui ont déjà une production, par ordre alphabétique. */
+    public List<String> massiersListe() {
+        java.util.TreeMap<String, String> m = new java.util.TreeMap<>();
+        for (String n : massiersRegistre) m.put(n.toLowerCase(Locale.ROOT), n);
+        for (String n : massiers()) if (!m.containsKey(n.toLowerCase(Locale.ROOT))) m.put(n.toLowerCase(Locale.ROOT), n);
+        return new ArrayList<>(m.values());
+    }
 
     /** Liste {téléphone, nom et prénom, massier, date de création} des comptes secrétaire. */
     public List<String[]> secretaires() { return secretaires; }

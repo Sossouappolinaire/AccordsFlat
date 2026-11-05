@@ -469,7 +469,11 @@ final class Supabase {
             String r = rest("POST", "rpc/admin_video_modifier", o.toString(), null);
             if (r == null) return "reseau";
             JSONObject j = new JSONObject(r);
-            return j.optBoolean("ok") ? "" : j.optString("erreur", "refuse");
+            if (!j.optBoolean("ok")) return j.optString("erreur", "refuse");
+            // La base a supprimé les anciennes versions de sa table ; on supprime aussi leurs fichiers APK du stockage.
+            JSONArray anciens = j.optJSONArray("anciens");
+            for (int i = 0; anciens != null && i < anciens.length(); i++) supprimerApk(anciens.optString(i, ""));
+            return "";
         } catch (Exception e) {
             return "reseau";
         }
@@ -643,6 +647,37 @@ final class Supabase {
             return j.optBoolean("ok") ? "" : j.optString("erreur", "refuse");
         } catch (Exception e) {
             return "reseau";
+        }
+    }
+
+    /** Admin : supprime un ancien fichier APK du dossier « apk-app » (échec ignoré : la prochaine publication réessaie). */
+    private static void supprimerApk(String nom) {
+        if (nom == null || nom.isEmpty()) return;
+        HttpURLConnection c = null;
+        try {
+            String chemin = java.net.URLEncoder.encode(nom, "UTF-8").replace("+", "%20");
+            c = (HttpURLConnection) new URL(URL_PROJET + "/storage/v1/object/apk-app/" + chemin).openConnection();
+            c.setRequestMethod("DELETE");
+            c.setRequestProperty("apikey", CLE);
+            String jeton = Compte.jeton();
+            if (jeton != null) c.setRequestProperty("Authorization", "Bearer " + jeton);
+            c.setConnectTimeout(15000);
+            c.setReadTimeout(30000);
+            c.getResponseCode();
+        } catch (Exception ignore) {
+            // fichier déjà supprimé ou réseau coupé : sans gravité
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
+
+    /** Admin : tous les téléchargements de films / séries {ok, total, utilisateurs, liste, top, par_utilisateur}. */
+    static JSONObject adminTelechargements() {
+        try {
+            String r = rest("POST", "rpc/admin_telechargements", "{}", null);
+            return r == null ? null : new JSONObject(r);
+        } catch (Exception e) {
+            return null;
         }
     }
 
