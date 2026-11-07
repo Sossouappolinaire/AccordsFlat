@@ -21,7 +21,7 @@ public class JeuxActivity extends Activity {
 
     private static final String PREFS = "jeux";
 
-    private static final String[] JEUX = {"panda", "mario", "serpent", "commando", "liquide", "motard", "foot", "pes", "quiz"};
+    private static final String[] JEUX = {"panda", "mario", "serpent", "commando", "liquide", "motard", "foot", "pes", "quiz", "casse"};
 
     /** Par jeu : [0] mon record, [1] meilleur joueur de tous les joueurs. */
     private final HashMap<String, TextView[]> champs = new HashMap<>();
@@ -81,6 +81,11 @@ public class JeuxActivity extends Activity {
                 "Glissez le doigt pour tourner, mangez les pommes, ne touchez ni les murs ni votre queue.",
                 0xFF1E8E3E, 0xFF12B5CB,
                 new Intent(this, JeuSerpentActivity.class));
+
+        carte(root, "casse", "💖", "Cœur Casse-Briques",
+                "Casse-briques néon : brise les cœurs, attrape les bonus (raquette large, trois boules, ralenti), enchaîne les combos et évite les astéroïdes.",
+                0xFFC2185B, 0xFF5E35B1,
+                new Intent(this, JeuCasseBriquesActivity.class));
 
         carte(root, "commando", "🔫", "Commando Kouamé",
                 "Un jeu d'action et de tir comme les anciens jeux de console : cours, saute, tire sur les soldats et détruis le robot de chaque niveau.",

@@ -2,7 +2,11 @@ package bj.radio;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ActivityNotFoundException;
+import android.content.Intent;
 import android.content.res.ColorStateList;
+import android.graphics.Bitmap;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -24,9 +28,13 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Questions pour un champion : quiz de culture générale avec 4 réponses lues à voix haute (synthèse vocale du téléphone).
@@ -36,7 +44,7 @@ import java.util.Locale;
  */
 public class JeuQuizActivity extends Activity {
 
-    private static final int DUREE_SOLO = 20, NB_SOLO = 10;
+    private static final int DUREE_SOLO = 20, QUESTIONS_PAR_NIVEAU = 5, NB_NIVEAUX = 5, REQ_PHOTO = 4711;
     private static final int GRIS = 0xFF2A3F55, VERT_OK = 0xFF2E7D32, ROUGE = 0xFFC62828, SELECT = 0xFF1E88E5;
     private static final int M_MENU = 0, M_SOLO = 1, M_LOBBY = 2, M_SALLE = 3, M_LIGNE = 4, M_FIN = 5;
 
@@ -66,8 +74,13 @@ public class JeuQuizActivity extends Activity {
     private final Runnable pollLobby = this::majLobby;
 
     // solo
-    private int[] idsSolo;
-    private int iSolo, scoreSolo;
+    private int niveauSolo, qSolo, scoreSolo;      // niveau 1 à 5, question 0 à 4 dans le niveau
+
+    // plateau 4-3-2-1 et photos
+    private QuizTableau tableau;
+    private Bitmap photoMoi;
+    private final Map<String, Bitmap> photosLigne = new HashMap<>();
+    private final Set<String> photosDemandees = new HashSet<>();
 
     // en ligne
     private String salonId, codeSalon;
@@ -86,6 +99,7 @@ public class JeuQuizActivity extends Activity {
         Ui.fenetre(this);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         son = getSharedPreferences("quiz", MODE_PRIVATE).getBoolean("son", true);
+        photoMoi = QuizPhoto.locale(this);
 
         tts = new TextToSpeech(this, status -> {
             if (tts == null) return;
@@ -190,6 +204,7 @@ public class JeuQuizActivity extends Activity {
         page.removeAllViews();
         sv.scrollTo(0, 0);
         tvEntete = tvScore = tvMinuteur = tvPhase = tvRetour = tvClassement = tvJoueurs = tvCompte = tvGains = null;
+        tableau = null;
         btnRetrait = null;
         barre = null;
         listeSalons = null;
@@ -237,9 +252,15 @@ public class JeuQuizActivity extends Activity {
         voix.setOnClickListener(v -> { basculerVoix(); voix.setText(voixTexte()); });
         Ui.ajouter(page, voix, 10);
 
-        Ui.ajouter(page, Ui.texte(this, "Seul : 10 questions, 20 secondes chacune, jusqu'à 20 points par bonne réponse (bonus de rapidité). Aucun gain à gagner, c'est juste pour s'entraîner.\n"
+        Button photo = Ui.boutonContour(this, photoMoi == null ? "📷  Ajouter ma photo (parties en ligne)" : "📷  Changer ma photo", Ui.TXT);
+        photo.setOnClickListener(v -> choisirPhoto());
+        Ui.ajouter(page, photo, 10);
+
+        Ui.ajouter(page, Ui.texte(this, "Seul : 5 niveaux de 5 questions, de plus en plus difficiles. Une bonne réponse vaut 4, 3, 2 ou 1 point (plus vite = plus de points), multipliés par le niveau. "
+                + "Une erreur et vous perdez tous vos points : à la fin de chaque niveau, vous pouvez continuer ou arrêter pour les garder. "
+                + "Une question déjà posée ne revient jamais. Aucun gain à gagner, c'est juste pour s'entraîner.\n"
                 + "En ligne : 2 à 10 joueurs, les mêmes questions pour tous, classement en direct.\n\n"
-                + "En ligne : le premier qui clique sur la bonne réponse gagne le point de la question. "
+                + "En ligne : le premier qui clique sur la bonne réponse gagne les points du moment (4, 3, 2 ou 1, selon la rapidité). "
                 + "Après 10 questions, le meilleur score gagne des points gagnés (1 point = 1 F), différents du score du jeu. "
                 + "Retrait sur demande, confirmé par l'administrateur.", 12, Ui.TXT2, false), 18);
     }
@@ -330,6 +351,9 @@ public class JeuQuizActivity extends Activity {
         haut.addView(tvScore);
         Ui.ajouter(page, haut, 0);
 
+        tableau = new QuizTableau(this);
+        Ui.ajouter(page, tableau, 6);
+
         tvMinuteur = Ui.texte(this, "", 22, Ui.TXT, true);
         tvMinuteur.setGravity(Gravity.CENTER);
         Ui.ajouter(page, tvMinuteur, 10);
@@ -339,9 +363,20 @@ public class JeuQuizActivity extends Activity {
         barre.setProgressTintList(ColorStateList.valueOf(Ui.VERT));
         Ui.ajouter(page, barre, 4);
 
-        TextView q = Ui.texte(this, QuizBanque.question(id), 21, Ui.TXT, true);
+        View image = QuizImage.vue(this, QuizBanque.categorie(id), QuizBanque.question(id));
+        if (image != null) Ui.ajouter(page, image, 12); // drapeau du pays cité ou icône de la catégorie
+
+        // la question dans un bandeau bleu à contour doré, comme à la télévision
+        TextView q = Ui.texte(this, QuizBanque.question(id), 20, 0xFFFFFFFF, true);
         q.setGravity(Gravity.CENTER);
-        Ui.ajouter(page, q, 18);
+        int pad = Ui.dp(this, 16);
+        q.setPadding(pad, Ui.dp(this, 14), pad, Ui.dp(this, 14));
+        android.graphics.drawable.GradientDrawable bandeau = new android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, new int[]{0xFF1E5AA8, 0xFF0A1F4A});
+        bandeau.setCornerRadius(Ui.dp(this, 14));
+        bandeau.setStroke(Ui.dp(this, 2), 0xFFFFB300);
+        q.setBackground(bandeau);
+        Ui.ajouter(page, q, image != null ? 4 : 14);
 
         String[] rep = QuizBanque.reponses(id);
         String[] lettres = {"A", "B", "C", "D"};
@@ -417,24 +452,60 @@ public class JeuQuizActivity extends Activity {
 
     // ------------------------------------------------------------------ solo
 
+    /** Valeur de la question à cet instant : 4 pendant le premier quart du temps, puis 3, 2 et 1. */
+    private static int valeurSelon(double ecoule, double duree) {
+        double f = ecoule / duree;
+        return f < 0.25 ? 4 : f < 0.5 ? 3 : f < 0.75 ? 2 : 1;
+    }
+
+    private Set<String> vuesSolo() {
+        return new HashSet<>(getSharedPreferences("quiz", MODE_PRIVATE).getStringSet("vues_solo", new HashSet<String>()));
+    }
+
+    /** Tire une question jamais posée (de la difficulté du niveau si possible) et la marque comme posée pour toujours. */
+    private int tirerQuestionSolo(int niveauJeu) {
+        Set<String> vues = vuesSolo();
+        int d1 = niveauJeu <= 2 ? 1 : niveauJeu <= 4 ? 2 : 3;
+        int d2 = niveauJeu == 2 ? 2 : niveauJeu == 4 ? 3 : d1;
+        List<Integer> bonnes = new ArrayList<>(), autres = new ArrayList<>();
+        for (int i = 1; i <= QuizBanque.taille(); i++) {
+            if (vues.contains(String.valueOf(i))) continue;
+            int d = QuizBanque.niveau(i);
+            if (d == d1 || d == d2) bonnes.add(i); else autres.add(i);
+        }
+        if (bonnes.isEmpty() && autres.isEmpty()) {          // toutes les questions ont été posées : on repart de zéro
+            vues.clear();
+            for (int i = 1; i <= QuizBanque.taille(); i++) bonnes.add(i);
+        }
+        List<Integer> pool = bonnes.isEmpty() ? autres : bonnes;
+        int id = pool.get((int) (Math.random() * pool.size()));
+        vues.add(String.valueOf(id));
+        getSharedPreferences("quiz", MODE_PRIVATE).edit().putStringSet("vues_solo", new HashSet<>(vues)).apply();
+        return id;
+    }
+
     private void lancerSolo() {
         nouvelEcran(M_SOLO);
-        List<Integer> l = new ArrayList<>();
-        for (int i = 1; i <= QuizBanque.taille(); i++) l.add(i);
-        Collections.shuffle(l);
-        idsSolo = new int[NB_SOLO];
-        for (int i = 0; i < NB_SOLO; i++) idsSolo[i] = l.get(i);
-        iSolo = 0;
+        niveauSolo = 1;
+        qSolo = 0;
         scoreSolo = 0;
         questionSolo();
     }
 
+    private void majTableauSolo() {
+        if (tableau == null) return;
+        tableau.gauche("Vous", photoMoi, "V", String.valueOf(scoreSolo));
+        tableau.droite("Niveau " + niveauSolo, null, String.valueOf(niveauSolo), (qSolo + 1) + "/" + QUESTIONS_PAR_NIVEAU);
+    }
+
     private void questionSolo() {
-        if (iSolo >= NB_SOLO) { finSolo(); return; }
-        idCourant = idsSolo[iSolo];
+        idCourant = tirerQuestionSolo(niveauSolo);
         repondu = false;
-        construireQuestion(idCourant, "Question " + (iSolo + 1) + "/" + NB_SOLO + "  •  " + QuizBanque.categorie(idCourant), false);
-        tvScore.setText("Score : " + scoreSolo);
+        construireQuestion(idCourant, "Niveau " + niveauSolo + "/" + NB_NIVEAUX + "  •  Question " + (qSolo + 1) + "/" + QUESTIONS_PAR_NIVEAU
+                + "  •  " + QuizBanque.categorie(idCourant), false);
+        tvScore.setText("Points : " + scoreSolo);
+        majTableauSolo();
+        tableau.niveau(4);
         majMinuteur(DUREE_SOLO, DUREE_SOLO);
         debutQ = SystemClock.elapsedRealtime();
         lireQuestion(idCourant);
@@ -444,9 +515,11 @@ public class JeuQuizActivity extends Activity {
 
     private void ticSolo() {
         if (repondu || tvMinuteur == null) return;
-        double reste = DUREE_SOLO - (SystemClock.elapsedRealtime() - debutQ) / 1000.0;
+        double ecoule = (SystemClock.elapsedRealtime() - debutQ) / 1000.0;
+        double reste = DUREE_SOLO - ecoule;
         if (reste <= 0) { repondreSolo(-1); return; }
         majMinuteur(reste, DUREE_SOLO);
+        if (tableau != null) tableau.niveau(valeurSelon(ecoule, DUREE_SOLO));
         h.postDelayed(tick, 200);
     }
 
@@ -455,36 +528,86 @@ public class JeuQuizActivity extends Activity {
         repondu = true;
         h.removeCallbacks(tick);
         int bonne = QuizBanque.bonne(idCourant);
-        double reste = Math.max(0, DUREE_SOLO - (SystemClock.elapsedRealtime() - debutQ) / 1000.0);
-        int pts = choix == bonne ? 10 + (int) Math.floor(10 * reste / DUREE_SOLO) : 0;
+        double ecoule = Math.min(DUREE_SOLO, (SystemClock.elapsedRealtime() - debutQ) / 1000.0);
+        int valeur = valeurSelon(ecoule, DUREE_SOLO);
+        boolean juste = choix == bonne;
+        int pts = juste ? valeur * niveauSolo : 0;
         scoreSolo += pts;
-        tvScore.setText("Score : " + scoreSolo);
+        tvScore.setText("Points : " + scoreSolo);
+        majTableauSolo();
+        if (tableau != null) { tableau.niveau(juste ? valeur : 0); tableau.lueur(juste ? -1 : 0); }
         montrerCorrection(bonne, choix);
         String bonneTxt = reponseTexte(idCourant, bonne);
-        if (choix == bonne) {
-            tvRetour.setText("✅ Bonne réponse ! +" + pts + " points");
+        if (juste) {
+            tvRetour.setText("✅ Bonne réponse ! " + valeur + " × niveau " + niveauSolo + " = +" + pts + " points");
             parler("Bonne réponse !");
         } else if (choix < 0) {
-            tvRetour.setText("⏱ Temps écoulé ! Bonne réponse : " + bonneTxt);
+            tvRetour.setText("⏱ Temps écoulé ! Bonne réponse : " + bonneTxt + "\n➡ 0 point, on passe à la question suivante.");
             parler("Temps écoulé. La bonne réponse était : " + bonneTxt);
         } else {
-            tvRetour.setText("❌ Raté. Bonne réponse : " + bonneTxt);
+            tvRetour.setText("❌ Raté. Bonne réponse : " + bonneTxt + "\n💥 Vous perdez vos " + scoreSolo + " points.");
             parler("Raté. La bonne réponse était : " + bonneTxt);
         }
         majMinuteur(0, DUREE_SOLO);
-        apres(4000, () -> { iSolo++; questionSolo(); });
+        if (!juste && choix >= 0) {            // mauvaise réponse : partie perdue
+            apres(4500, this::finSoloPerdu);
+        } else {                               // bonne réponse, ou temps écoulé sans réponse : on passe à la suite
+            apres(juste ? 3500 : 4500, () -> {
+                qSolo++;
+                if (qSolo >= QUESTIONS_PAR_NIVEAU) finNiveauSolo(); else questionSolo();
+            });
+        }
     }
 
-    private void finSolo() {
+    /** Niveau réussi : continuer (en risquant tous ses points) ou arrêter et garder ses points. */
+    private void finNiveauSolo() {
+        if (niveauSolo >= NB_NIVEAUX) { finSoloTermine(true); return; }
+        nouvelEcran(M_FIN);
+        Ui.ajouter(page, Ui.texte(this, "🎉 Niveau " + niveauSolo + " réussi !", 26, Ui.JAUNE, true), 0);
+        TextView t = Ui.texte(this, scoreSolo + " points", 44, Ui.TXT, true);
+        t.setGravity(Gravity.CENTER);
+        Ui.ajouter(page, t, 20);
+        Ui.ajouter(page, Ui.texte(this, "Le niveau " + (niveauSolo + 1) + " est plus difficile et ses points valent plus. "
+                + "Si vous ratez une seule question, vous perdez tous vos points.", 15, Ui.TXT, false), 10);
+        Button suite = Ui.bouton(this, "➡  Niveau " + (niveauSolo + 1) + " (je risque mes points)", Ui.VERT);
+        suite.setOnClickListener(v -> { niveauSolo++; qSolo = 0; nouvelEcran(M_SOLO); questionSolo(); });
+        Ui.ajouter(page, suite, 20);
+        Button stop = Ui.bouton(this, "💰  Arrêter et garder mes " + scoreSolo + " points", Ui.ACCENT);
+        stop.setOnClickListener(v -> finSoloTermine(false));
+        Ui.ajouter(page, stop, 10);
+        parler("Niveau " + niveauSolo + " réussi. Vous avez " + scoreSolo + " points. Continuez, ou arrêtez pour garder vos points.");
+    }
+
+    private void finSoloPerdu() {
+        nouvelEcran(M_FIN);
+        int perdus = scoreSolo;
+        scoreSolo = 0;
+        Ui.ajouter(page, Ui.texte(this, "💥 Perdu au niveau " + niveauSolo, 26, Ui.JAUNE, true), 0);
+        TextView t = Ui.texte(this, "−" + perdus + " points", 44, 0xFFFF5252, true);
+        t.setGravity(Gravity.CENTER);
+        Ui.ajouter(page, t, 20);
+        Ui.ajouter(page, Ui.texte(this, "Vous avez perdu tous vos points. En recommençant, vous repartez du niveau 1 avec de nouvelles questions : "
+                + "celles déjà posées ne reviennent jamais.", 15, Ui.TXT, false), 10);
+        TextView r = Ui.texte(this, "🏆 Mon record : " + JeuxActivity.record(this, "quiz") + " points", 14, Ui.JAUNE, true);
+        r.setGravity(Gravity.CENTER);
+        Ui.ajouter(page, r, 8);
+        Button encore = Ui.bouton(this, "🔁  Recommencer", Ui.VERT);
+        encore.setOnClickListener(v -> lancerSolo());
+        Ui.ajouter(page, encore, 22);
+        retourMenu("Menu");
+        parler("Perdu. Vous perdez vos " + perdus + " points.");
+    }
+
+    private void finSoloTermine(boolean tousNiveaux) {
         nouvelEcran(M_FIN);
         int total = scoreSolo;
         boolean record = total > JeuxActivity.record(this, "quiz");
         JeuxActivity.enregistrer(this, "quiz", total);
-        Ui.ajouter(page, Ui.texte(this, "🏁 Partie terminée", 26, Ui.JAUNE, true), 0);
+        Ui.ajouter(page, Ui.texte(this, tousNiveaux ? "🏆 Champion ! Les 5 niveaux réussis" : "🏁 Partie terminée", 26, Ui.JAUNE, true), 0);
         TextView t = Ui.texte(this, total + " points", 44, Ui.TXT, true);
         t.setGravity(Gravity.CENTER);
         Ui.ajouter(page, t, 20);
-        String msg = total >= 150 ? "🏆 Champion ! Quelle culture !" : total >= 100 ? "👏 Très bien joué !" : total >= 50 ? "👍 Pas mal, continuez !" : "💪 Courage, la prochaine sera la bonne !";
+        String msg = tousNiveaux ? "🏆 Quelle culture ! Vous avez gardé tous vos points." : "💰 Vous gardez vos points. Bien joué, vous avez su vous arrêter à temps !";
         TextView m = Ui.texte(this, msg, 16, Ui.TXT, true);
         m.setGravity(Gravity.CENTER);
         Ui.ajouter(page, m, 8);
@@ -495,7 +618,37 @@ public class JeuQuizActivity extends Activity {
         encore.setOnClickListener(v -> lancerSolo());
         Ui.ajouter(page, encore, 22);
         retourMenu("Menu");
-        parler("Partie terminée. Vous avez " + total + " points.");
+        parler("Partie terminée. Vous gardez " + total + " points.");
+    }
+
+    // ------------------------------------------------------------------ photo de profil
+
+    private void choisirPhoto() {
+        try {
+            Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+            i.setType("image/*");
+            startActivityForResult(Intent.createChooser(i, "Choisir ma photo"), REQ_PHOTO);
+        } catch (ActivityNotFoundException e) {
+            toast("Aucune application de galerie trouvée.");
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requete, int resultat, Intent data) {
+        super.onActivityResult(requete, resultat, data);
+        if (requete != REQ_PHOTO || resultat != RESULT_OK || data == null || data.getData() == null) return;
+        final Uri uri = data.getData();
+        new Thread(() -> {
+            final String b64 = QuizPhoto.enregistrer(this, uri);
+            if (b64 != null && Compte.connecte()) QuizReseau.definirPhoto(b64);     // visible par les autres joueurs en ligne
+            runOnUiThread(() -> {
+                if (!vivant) return;
+                if (b64 == null) { toast("Cette image n'a pas pu être lue."); return; }
+                photoMoi = QuizPhoto.decoder(b64);
+                toast("✅ Photo enregistrée");
+                if (mode == M_MENU) afficherMenu();
+            });
+        }).start();
     }
 
     // ------------------------------------------------------------------ en ligne : salons
@@ -631,6 +784,8 @@ public class JeuQuizActivity extends Activity {
         salonId = null;
         suisHote = false;
         et = null;
+        photosLigne.clear();
+        photosDemandees.clear();
         if (id != null) new Thread(() -> QuizReseau.quitter(id)).start();
     }
 
@@ -760,7 +915,8 @@ public class JeuQuizActivity extends Activity {
         n.setGravity(Gravity.CENTER);
         Ui.ajouter(page, n, 6);
         Ui.ajouter(page, Ui.texte(this, "📜 Les règles", 18, Ui.TXT, true), 22);
-        Ui.ajouter(page, Ui.texte(this, "• Le premier qui clique sur la bonne réponse gagne le point de la question.\n"
+        Ui.ajouter(page, Ui.texte(this, "• Chaque question vaut 4, 3, 2 puis 1 point : plus vous répondez vite, plus elle rapporte.\n"
+                + "• Le premier qui clique sur la bonne réponse gagne les points affichés à cet instant.\n"
                 + "• Si deux joueurs choisissent la même réponse, celui qui a cliqué le premier l'emporte.\n"
                 + "• Une mauvaise réponse ne permet plus de répondre à la question.\n"
                 + "• Après 10 questions, le joueur qui a le plus de points gagne " + gain + " points gagnés.", 15, Ui.TXT, false), 8);
@@ -768,7 +924,7 @@ public class JeuQuizActivity extends Activity {
         tvCompte = Ui.texte(this, "", 64, Ui.TXT, true);
         tvCompte.setGravity(Gravity.CENTER);
         Ui.ajouter(page, tvCompte, 10);
-        parler("Vous voulez jouer avec " + noms + ". Voici les règles. Le premier qui clique sur la bonne réponse gagne le point. "
+        parler("Vous voulez jouer avec " + noms + ". Voici les règles. Une question vaut quatre, trois, deux puis un point selon la rapidité. Le premier qui clique sur la bonne réponse gagne les points. "
                 + "Si deux joueurs choisissent la même réponse, le plus rapide l'emporte. "
                 + "Après dix questions, le meilleur score gagne " + gain + " points gagnés. Soyez prêts !");
     }
@@ -794,6 +950,7 @@ public class JeuQuizActivity extends Activity {
         construireQuestion(id, "Question " + (num + 1) + "/" + et.optInt("nb", 10) + "  •  " + QuizBanque.categorie(id), true);
         tvScore.setText("Score : " + scoreLigne);
         majClassement();
+        if (tableau != null) tableau.niveau(4);
         lireQuestion(id);
     }
 
@@ -820,9 +977,14 @@ public class JeuQuizActivity extends Activity {
             if (!fermee) {
                 double reste = duree - (serveur - qd) / 1000.0;
                 majMinuteur(Math.max(0, reste), duree);
-                tvPhase.setText(repondu ? "Réponse envoyée." : "Soyez le premier à cliquer sur la bonne réponse !");
+                if (tableau != null) tableau.niveau(valeurSelon(duree - Math.max(0, reste), duree));
+                tvPhase.setText(repondu ? "Réponse envoyée." : "Soyez le premier à cliquer sur la bonne réponse : 4, 3, 2 puis 1 point !");
             } else {
                 majMinuteur(0, duree);
+                if (tableau != null) {
+                    boolean gagne = !texte(et, "gagnant").isEmpty();
+                    tableau.niveau(gagne ? valeurSelon((et.optLong("q_fin") - qd) / 1000.0, duree) : 0);
+                }
                 repondu = true;
                 if (!reveleDemande) cloturerLigne(num);
                 double suiv = (et.optLong("q_fin") + pause * 1000L - serveur) / 1000.0;
@@ -852,7 +1014,7 @@ public class JeuQuizActivity extends Activity {
                         scoreLigne = r.optInt("score");
                         tvScore.setText("Score : " + scoreLigne);
                         montrerCorrection(bonneLigne, choix);
-                        tvRetour.setText("⚡ Vous avez été le plus rapide ! +1 point");
+                        tvRetour.setText("⚡ Vous avez été le plus rapide ! +" + Math.max(1, r.optInt("valeur", 1)) + " point(s)");
                         parler("Bravo, vous gagnez le point !");
                     } else {
                         colorer(btn[choix], ROUGE);
@@ -939,7 +1101,66 @@ public class JeuQuizActivity extends Activity {
 
     private void majClassement() {
         if (tvClassement != null) tvClassement.setText(lignesClassement());
+        majTableau();
     }
+
+    private static String initiale(String nom) {
+        return nom == null || nom.trim().isEmpty() ? "?" : nom.trim().substring(0, 1).toUpperCase(Locale.FRANCE);
+    }
+
+    /** Plateau en ligne : moi à gauche, le meilleur adversaire à droite, le gagnant du point entouré d'or. */
+    private void majTableau() {
+        if (tableau == null || et == null || mode != M_LIGNE) return;
+        JSONArray j = et.optJSONArray("joueurs");
+        JSONObject moi = null, rival = null;
+        for (int i = 0; j != null && i < j.length(); i++) {
+            JSONObject o = j.optJSONObject(i);
+            if (o == null) continue;
+            if (o.optBoolean("moi")) moi = o; else if (rival == null) rival = o;      // la liste est classée : le premier autre joueur est le plus fort
+        }
+        demanderPhotos(j);
+        String nomMoi = moi == null ? "Vous" : texte(moi, "nom");
+        tableau.gauche(nomMoi, photoMoi != null ? photoMoi : moi == null ? null : photosLigne.get(texte(moi, "cle")), initiale(nomMoi),
+                String.valueOf(moi == null ? scoreLigne : moi.optInt("score")));
+        if (rival == null) tableau.droite("", null, "?", "0");
+        else tableau.droite(texte(rival, "nom"), photosLigne.get(texte(rival, "cle")), initiale(texte(rival, "nom")), String.valueOf(rival.optInt("score")));
+        String gagnant = texte(et, "gagnant");
+        int lueur = 0;
+        if (!et.isNull("q_fin") && !gagnant.isEmpty())
+            lueur = et.optBoolean("gagnant_moi") ? -1 : rival != null && gagnant.equals(texte(rival, "nom")) ? 1 : 0;
+        tableau.lueur(lueur);
+    }
+
+    /** Va chercher les photos des joueurs qu'on n'a pas encore (une seule fois par joueur). */
+    private void demanderPhotos(JSONArray joueurs) {
+        final String id = salonId;
+        if (id == null || joueurs == null) return;
+        boolean nouveau = false;
+        for (int i = 0; i < joueurs.length(); i++) {
+            JSONObject o = joueurs.optJSONObject(i);
+            String cle = texte(o, "cle");
+            if (!cle.isEmpty() && photosDemandees.add(cle)) nouveau = true;
+        }
+        if (!nouveau) return;
+        new Thread(() -> {
+            final JSONObject r = QuizReseau.photos(id);
+            if (r == null || !r.optBoolean("ok")) return;
+            JSONObject ph = r.optJSONObject("photos");
+            if (ph == null) return;
+            final Map<String, Bitmap> recu = new HashMap<>();
+            for (Iterator<String> it = ph.keys(); it.hasNext(); ) {
+                String cle = it.next();
+                Bitmap b = QuizPhoto.decoder(ph.optString(cle, ""));
+                if (b != null) recu.put(cle, b);
+            }
+            runOnUiThread(() -> {
+                if (!vivant || !id.equals(salonId)) return;
+                photosLigne.putAll(recu);
+                majTableau();
+            });
+        }).start();
+    }
+
 
     private void finLigne() {
         final String id = salonId;

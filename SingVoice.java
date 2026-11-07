@@ -73,18 +73,23 @@ public class SingVoice {
     public static List<Note> melody(SongSynth.Params p, String text, double startSec, double lineSec,
                                     double barSec, int firstBar, int lo, int hi, long seed, boolean endOfVerse) {
         List<String> words = new ArrayList<>();
-        for (String w : text.split("\\s+")) {
+        String pend = "";
+        for (String w : text.replace('\'', ' ').replace('’', ' ').split("\\s+")) {
             String c = clean(w);
-            if (!c.isEmpty()) words.add(c);
+            if (c.isEmpty()) continue;
+            if (!hasVowel(c)) { pend += c; continue; } // « l' », « d' »... collés au mot suivant
+            for (String sy : splitSyllables(pend + c)) words.add(sy);
+            pend = "";
         }
+        if (!pend.isEmpty() && !words.isEmpty()) words.set(words.size() - 1, words.get(words.size() - 1) + pend);
         List<Note> out = new ArrayList<>();
         if (words.isEmpty()) return out;
 
         double[] weight = new double[words.size()];
         double total = 0;
         for (int i = 0; i < weight.length; i++) {
-            weight[i] = syllables(words.get(i));
-            if (i == weight.length - 1) weight[i] *= 1.8; // dernier mot tenu plus longtemps
+            weight[i] = 1;
+            if (i == weight.length - 1) weight[i] = 2.2; // dernière syllabe tenue plus longtemps
             total += weight[i];
         }
         double usable = lineSec * 0.94;
@@ -303,8 +308,102 @@ public class SingVoice {
         return Arrays.copyOf(out, outLen);
     }
 
+    // ------------------------------------------------------------------ Chant (PSOLA)
+
+    /** Hauteur (Hz) d'une trame de 35 ms commençant en s ; 0 si la trame n'est pas voisée. */
+    static double f0Frame(float[] x, int s, int sr, float peak) {
+        int frame = (int) (0.035 * sr);
+        int minLag = sr / 450, maxLag = sr / 70;
+        if (s < 0 || s + frame + maxLag + 2 >= x.length) return 0;
+        double e0 = 0;
+        for (int i = 0; i < frame; i++) e0 += x[s + i] * x[s + i];
+        if (e0 / frame < Math.pow(peak * 0.08, 2)) return 0;
+        double[] nc = new double[maxLag + 2];
+        double best = 0;
+        for (int lag = minLag; lag <= maxLag; lag++) {
+            double c = 0, e1 = 0;
+            for (int i = 0; i < frame; i++) {
+                c += x[s + i] * x[s + i + lag];
+                e1 += x[s + i + lag] * x[s + i + lag];
+            }
+            nc[lag] = c / Math.sqrt(e0 * e1 + 1e-12);
+            if (nc[lag] > best) best = nc[lag];
+        }
+        if (best < 0.55) return 0;
+        for (int lag = minLag + 1; lag < maxLag; lag++) {
+            if (nc[lag] >= 0.9 * best && nc[lag] >= nc[lag - 1] && nc[lag] >= nc[lag + 1])
+                return (double) sr / lag;
+        }
+        return 0;
+    }
+
+    /** Repères de période (pitch marks) dans x[a..b[ ; period[i] = période locale en échantillons. */
+    static double[][] pitchMarks(float[] x, int a, int b, int sr, float peak) {
+        int hop = (int) (0.005 * sr);
+        int nf = Math.max(1, (b - a) / hop + 1);
+        double[] f = new double[nf];
+        List<Double> ok = new ArrayList<>();
+        for (int k = 0; k < nf; k++) {
+            f[k] = f0Frame(x, a + k * hop - hop * 3, sr, peak);
+            if (f[k] > 0) ok.add(f[k]);
+        }
+        if (ok.isEmpty()) return null;
+        java.util.Collections.sort(ok);
+        double med = ok.get(ok.size() / 2);
+        for (int k = 0; k < nf; k++) if (f[k] <= 0 || f[k] > med * 1.6 || f[k] < med / 1.6) f[k] = med;
+        List<Integer> marks = new ArrayList<>();
+        List<Double> pers = new ArrayList<>();
+        double T0 = sr / f[0];
+        int best = a;
+        for (int i = a; i < Math.min(b, a + (int) T0 + 1); i++) if (x[i] > x[best]) best = i;
+        int pos = best;
+        while (pos < b) {
+            double T = sr / f[Math.min(nf - 1, (pos - a) / hop)];
+            marks.add(pos);
+            pers.add(T);
+            int nxt = pos + (int) Math.round(T);
+            int lo = Math.max(pos + 1, nxt - (int) (T * 0.2)), hi = Math.min(b - 1, nxt + (int) (T * 0.2));
+            if (lo > hi) break;
+            int bp = lo;
+            for (int i = lo; i <= hi; i++) if (x[i] > x[bp]) bp = i;
+            pos = bp;
+        }
+        if (marks.size() < 3) return null;
+        double[][] r = new double[2][marks.size()];
+        for (int i = 0; i < marks.size(); i++) {
+            r[0][i] = marks.get(i);
+            r[1][i] = pers.get(i);
+        }
+        return r;
+    }
+
+    /** Plus longue zone voisée (la voyelle) : {début, fin} en échantillons, ou null. */
+    static int[] vowelRegion(float[] x, int sr, float peak) {
+        int hop = (int) (0.01 * sr);
+        int nf = x.length / hop;
+        boolean[] v = new boolean[nf];
+        for (int k = 0; k < nf; k++) v[k] = f0Frame(x, k * hop, sr, peak) > 0;
+        for (int k = 1; k + 1 < nf; k++) if (!v[k] && v[k - 1] && v[k + 1]) v[k] = true; // comble les trous
+        int bestA = -1, bestN = 0, cur = -1;
+        for (int k = 0; k <= nf; k++) {
+            boolean on = k < nf && v[k];
+            if (on && cur < 0) cur = k;
+            if (!on && cur >= 0) {
+                if (k - cur > bestN) { bestN = k - cur; bestA = cur; }
+                cur = -1;
+            }
+        }
+        if (bestN < 4) return null; // moins de 40 ms : pas de voyelle exploitable
+        int a = bestA * hop + (int) (0.012 * sr);
+        int b = (bestA + bestN) * hop + (int) (0.02 * sr);
+        b = Math.min(b, x.length);
+        if (b - a < 0.04 * sr) return null;
+        return new int[]{a, b};
+    }
+
     /**
-     * Fait chanter un mot : hauteur calée sur la note, durée calée sur le rythme.
+     * Fait chanter un mot : la consonne reste parlée, la voyelle est tenue sur la note
+     * (hauteur FIXE grâce à PSOLA, léger vibrato sur les notes longues) pendant toute la durée voulue.
      *
      * @param word  voix parlée du mot
      * @param sr    fréquence d'échantillonnage du mot
@@ -318,29 +417,397 @@ public class SingVoice {
         if (sr != SongSynth.SR) x = AudioDecoder.resample(x, sr, SongSynth.SR);
         int rate = SongSynth.SR;
         double target = 440.0 * Math.pow(2.0, (midi - 69) / 12.0);
+        float peak = 0;
+        for (float v : x) peak = Math.max(peak, Math.abs(v));
+        if (peak <= 0) return new float[0];
+        float[] y = null;
+        try {
+            y = singPsola(x, rate, target, dur, peak);
+        } catch (RuntimeException e) {
+            y = null;
+        }
+        if (y == null) y = singResample(x, rate, target, dur);
+        finish(y, rate);
+        return y;
+    }
+
+    private static float[] singPsola(float[] x, int rate, double target, double dur, float peak) {
+        int[] reg = vowelRegion(x, rate, peak);
+        if (reg == null) return null;
+        int a = reg[0], b = reg[1];
+        double[][] pm = pitchMarks(x, a, b, rate, peak);
+        if (pm == null) return null;
+        double[] marks = pm[0], per = pm[1];
+        int head = a, tail = x.length - b;
+        int want = (int) (dur * rate);
+        int nucOut = Math.max((int) (0.07 * rate), want - head - tail);
+        double T0 = rate / target;
+        float[] out = new float[head + nucOut + tail + (int) (T0 * 4) + 8];
+        // consonne d'attaque (parlée) : on la garde telle quelle
+        for (int i = 0; i < head; i++) out[i] = x[i];
+        // voyelle tenue
+        double stretchRatio = (double) nucOut / (b - a);
+        double t = 0; // position de sortie (échantillons depuis le début de la voyelle)
+        int markCount = marks.length;
+        double vibDepth = Math.min(1.0, Math.max(0.0, (nucOut / (double) rate - 0.25) / 0.4)) * 0.011;
+        while (t < nucOut) {
+            double u = t / nucOut;
+            double an = stretchRatio > 1.6 ? 0.15 + 0.7 * u : u; // longue note : on reste dans la partie stable
+            double apos = a + an * (b - a);
+            int k = 0;
+            double bd = 1e18;
+            for (int i = 0; i < markCount; i++) {
+                double d = Math.abs(marks[i] - apos);
+                if (d < bd) { bd = d; k = i; }
+            }
+            int half = (int) Math.round(per[k]);
+            int len = half * 2 + 1;
+            int outCenter = head + (int) t;
+            for (int i = -half; i <= half; i++) {
+                int si = (int) marks[k] + i, oi = outCenter + i;
+                if (si < 0 || si >= x.length || oi < 0 || oi >= out.length) continue;
+                double w = 0.5 + 0.5 * Math.cos(Math.PI * i / (half + 1));
+                out[oi] += (float) (x[si] * w);
+            }
+            double sec = t / rate;
+            double vib = 1.0 + vibDepth * Math.sin(2 * Math.PI * 5.4 * sec);
+            t += T0 / vib;
+        }
+        // fin de mot (consonne finale) collée après la voyelle
+        int dst = head + nucOut;
+        for (int i = 0; i < tail; i++) {
+            float g = i < 64 ? i / 64f : 1f;
+            if (dst + i < out.length) out[dst + i] += x[b + i] * g;
+        }
+        return Arrays.copyOf(out, Math.min(out.length, Math.max(head + nucOut + tail, (int) (dur * rate))));
+    }
+
+    /** Ancienne méthode (rééchantillonnage) si la voyelle n'a pas pu être repérée. */
+    private static float[] singResample(float[] x, int rate, double target, double dur) {
         double f0 = detectF0(x, rate);
-        if (f0 <= 0) f0 = 140; // voix parlée moyenne
+        if (f0 <= 0) f0 = 140;
         double r = Math.max(0.45, Math.min(2.6, target / f0));
         float[] shifted = resampleBy(x, r);
-        int want = (int) (dur * rate);
-        // on ne comprime pas trop (les consonnes resteraient inintelligibles)
-        want = Math.max(want, (int) (shifted.length * 0.6));
-        float[] y = stretch(shifted, rate, want);
-        // enveloppe douce (évite les claquements)
-        int fi = (int) (0.012 * rate), fo = (int) (0.05 * rate);
+        int want = Math.max((int) (dur * rate), (int) (shifted.length * 0.6));
+        return stretch(shifted, rate, want);
+    }
+
+    /** Enveloppe douce + normalisation du mot. */
+    private static void finish(float[] y, int rate) {
+        int fi = (int) (0.008 * rate), fo = (int) (0.06 * rate);
         for (int i = 0; i < y.length; i++) {
             float g = 1f;
             if (i < fi) g = i / (float) fi;
             if (y.length - i < fo) g = Math.min(g, (y.length - i) / (float) fo);
             y[i] *= g;
         }
-        // normalise le mot
         float peak = 0;
         for (float v : y) peak = Math.max(peak, Math.abs(v));
         if (peak > 0) {
             float k = 0.5f / peak;
             for (int i = 0; i < y.length; i++) y[i] *= k;
         }
+    }
+
+    // ------------------------------------------------------------------ Syllabes françaises
+
+    static boolean isV(String s, int i) {
+        char c = s.charAt(i);
+        if (c == 'u' && i > 0 && s.charAt(i - 1) == 'q') return false; // « qu » = consonne
+        return "aeiouyàâäéèêëîïôöùûüœ".indexOf(c) >= 0;
+    }
+
+    static boolean hasVowel(String w) {
+        String s = w.toLowerCase();
+        for (int i = 0; i < s.length(); i++) if (isV(s, i)) return true;
+        return false;
+    }
+
+    /** Coupe un mot en syllabes (règles simples du français). */
+    public static List<String> splitSyllables(String word) {
+        String s = word.toLowerCase();
+        int n = s.length();
+        List<int[]> g = new ArrayList<>();
+        for (int i = 0; i < n; ) {
+            if (isV(s, i)) {
+                int j = i;
+                while (j < n && isV(s, j)) j++;
+                if (s.substring(i, j).equals("uia")) { g.add(new int[]{i, i + 1}); g.add(new int[]{i + 1, j}); }
+                else g.add(new int[]{i, j});
+                i = j;
+            } else i++;
+        }
+        List<String> out = new ArrayList<>();
+        if (g.size() <= 1) { out.add(word); return out; }
+        // « e » muet final : n'a pas sa propre syllabe
+        int[] last = g.get(g.size() - 1);
+        String lg = s.substring(last[0], last[1]);
+        if (g.size() > 1 && (lg.equals("e") && (last[1] == n || s.substring(last[1]).equals("s") || s.substring(last[1]).equals("nt")))) {
+            g.remove(g.size() - 1);
+        }
+        int start = 0;
+        for (int k = 0; k + 1 < g.size(); k++) {
+            int e1 = g.get(k)[1], s2 = g.get(k + 1)[0];
+            int cut;
+            int nc = s2 - e1;
+            if (nc <= 1) cut = s2 - nc;
+            else {
+                String two = s.substring(s2 - 2, s2);
+                boolean digraph = two.equals("ch") || two.equals("ph") || two.equals("th") || two.equals("gn") || two.equals("qu");
+                boolean liquid = "lr".indexOf(two.charAt(1)) >= 0 && "bcdfgptv".indexOf(two.charAt(0)) >= 0;
+                cut = (digraph || liquid) ? s2 - 2 : e1 + 1;
+                if (nc >= 3 && !(digraph || liquid)) {
+                    String tr = s.substring(s2 - 3, s2);
+                    if (tr.endsWith("ch") || tr.endsWith("ph") || tr.endsWith("gn") || tr.endsWith("th")) cut = s2 - 2;
+                    else if ("lr".indexOf(tr.charAt(2)) >= 0 && "bcdfgptv".indexOf(tr.charAt(1)) >= 0) cut = s2 - 2;
+                    else cut = e1 + 1;
+                }
+            }
+            cut = Math.max(start + 1, Math.min(cut, n - 1));
+            out.add(word.substring(start, cut));
+            start = cut;
+        }
+        out.add(word.substring(start));
+        return out;
+    }
+
+    // ------------------------------------------------------------------ Synthèse de chant (formants)
+
+    /** Un morceau de syllabe : formants cibles et mélange voix / bruit. */
+    private static class Seg {
+        double f1, f2, f3, dur, voice, noise;
+        boolean hp = true;   // bruit aigu (s, f, ch…) plutôt que souffle
+        Seg(double f1, double f2, double f3, double dur, double voice, double noise) {
+            this.f1 = f1; this.f2 = f2; this.f3 = f3; this.dur = dur; this.voice = voice; this.noise = noise;
+        }
+    }
+
+    /** Formants {F1, F2, F3} d'une voyelle française ; nasale = F1 plus bas et son voilé. */
+    private static double[] vowelFormants(String g, String coda, boolean nasal) {
+        double[] r;
+        if (g.contains("ou") || g.equals("oû")) r = new double[]{320, 800, 2600};
+        else if (g.contains("eu") || g.contains("œ")) r = new double[]{420, 1500, 2500};
+        else if (g.contains("eau") || g.contains("au") || g.equals("o") || g.equals("ô")) r = new double[]{450, 850, 2700};
+        else if (g.contains("ai") || g.contains("ei") || g.equals("è") || g.equals("ê") || g.equals("ë")) r = new double[]{560, 1900, 2600};
+        else if (g.equals("é") || g.equals("ée") || g.equals("ez") || g.equals("er")) r = new double[]{400, 2200, 2800};
+        else if (g.startsWith("ui") || g.equals("u") || g.equals("û") || g.equals("ü") || g.equals("ù")) r = new double[]{300, 1750, 2150};
+        else if (g.equals("i") || g.equals("î") || g.equals("ï") || g.equals("y") || g.equals("ie") || g.equals("ia")) r = new double[]{290, 2250, 3000};
+        else if (g.equals("e")) r = coda.isEmpty() ? new double[]{450, 1500, 2500} : new double[]{540, 1850, 2600};
+        else if (g.contains("oi") || g.contains("a") || g.equals("à") || g.equals("â")) r = new double[]{780, 1250, 2800};
+        else if (g.contains("o")) r = new double[]{470, 900, 2700};
+        else r = new double[]{700, 1200, 2700};
+        if (nasal) {
+            if (g.startsWith("a") || g.startsWith("e") || g.equals("â")) r = new double[]{620, 1000, 2600};
+            else if (g.startsWith("o")) r = new double[]{480, 850, 2600};
+            else if (g.startsWith("i") || g.equals("y")) r = new double[]{550, 1700, 2600};
+            else r = new double[]{480, 1400, 2500};
+        }
+        return r;
+    }
+
+    /** Segment(s) d'une consonne ; null si muette. */
+    private static void addConsonant(List<Seg> l, String c, String next) {
+        switch (c) {
+            case "f": case "ph": l.add(new Seg(1200, 2400, 3500, 0.075, 0, 0.30)); break;
+            case "s": case "ç": case "z": case "x": l.add(new Seg(1400, 4500, 6000, 0.08, c.equals("z") ? 0.25 : 0, 0.36)); break;
+            case "c": {
+                boolean soft = next.startsWith("e") || next.startsWith("i") || next.startsWith("y");
+                if (soft) l.add(new Seg(1400, 4500, 6000, 0.08, 0, 0.36));
+                else { l.add(new Seg(500, 1500, 2500, 0.012, 0, 0)); l.add(new Seg(1500, 2500, 3500, 0.02, 0, 0.5)); }
+                break;
+            }
+            case "ch": case "j": l.add(new Seg(1200, 2600, 3200, 0.08, c.equals("j") ? 0.25 : 0, 0.32)); break;
+            case "v": l.add(new Seg(300, 1100, 2200, 0.06, 0.45, 0.16)); break;
+            case "p": case "t": case "k": case "q": case "qu":
+                l.add(new Seg(400, 1200, 2400, 0.014, 0, 0));
+                l.add(new Seg(1500, 3000, 4000, 0.018, 0, c.equals("t") ? 0.55 : 0.45)); break;
+            case "b": case "d": case "g":
+                l.add(new Seg(250, 1000, 2200, 0.02, 0.35, 0));
+                l.add(new Seg(900, 2000, 3000, 0.012, 0.3, 0.3)); break;
+            case "m": l.add(new Seg(250, 1000, 2200, 0.07, 0.55, 0)); break;
+            case "n": case "gn": l.add(new Seg(260, 1800, 2600, 0.065, 0.55, 0)); break;
+            case "l": l.add(new Seg(360, 1300, 2700, 0.05, 0.75, 0)); break;
+            case "r": l.add(new Seg(430, 1250, 1900, 0.05, 0.7, 0.05)); break;
+            case "w": l.add(new Seg(310, 800, 2500, 0.04, 0.8, 0)); break;
+            default: break;
+        }
+    }
+
+    private static List<String> consonantUnits(String s) {
+        List<String> u = new ArrayList<>();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            String two = i + 1 < s.length() ? s.substring(i, i + 2) : "";
+            if (two.equals("ch") || two.equals("ph") || two.equals("gn") || two.equals("qu")) { u.add(two); i++; }
+            else if (c == 'h' || c == '\'' || c == '’') continue;
+            else u.add(String.valueOf(c));
+        }
+        return u;
+    }
+
+    /**
+     * Chante une syllabe : consonne d'attaque, voyelle tenue sur la note (hauteur fixe, léger glissando
+     * d'attaque et vibrato), consonne finale. Voix entièrement synthétique (formants).
+     *
+     * @param syl    la syllabe écrite (ex. « mon », « sau », « ta »)
+     * @param midi   note
+     * @param dur    durée (s)
+     * @param scale  timbre : 0,88 homme · 1,0 femme · 1,12 enfant
+     */
+    public static float[] sungSyllable(String syl, int midi, double dur, double scale) {
+        int rate = SongSynth.SR;
+        String s = syl.toLowerCase();
+        int a = -1, b = -1;
+        for (int i = 0; i < s.length(); i++) if (isV(s, i)) { if (a < 0) a = i; b = i + 1; }
+        String onset, grp, coda;
+        if (a < 0) { onset = s; grp = "e"; coda = ""; }
+        else { onset = s.substring(0, a); grp = s.substring(a, b); coda = s.substring(b); }
+        boolean nasal = false;
+        if (!coda.isEmpty() && (coda.charAt(0) == 'n' || coda.charAt(0) == 'm') && !grp.equals("ou")) {
+            String rest = coda.substring(1);
+            if (rest.isEmpty() || !isV(rest + "a", 0)) { nasal = true; coda = rest.length() > 0 && "bcdfgjklmnpqrstvwxz".indexOf(rest.charAt(0)) >= 0 && rest.length() > 1 ? rest.substring(1) : ""; }
+        }
+        if (grp.equals("er") || grp.equals("ez")) coda = "";
+        if ((coda.equals("r") || coda.equals("z") || coda.equals("t") || coda.equals("s") || coda.equals("rs")) && (grp.equals("e") || grp.equals("é"))) {
+            if (grp.equals("e") && !coda.isEmpty() && s.endsWith("er")) { grp = "é"; coda = ""; }
+        }
+        double[] vf = vowelFormants(grp, coda, nasal);
+
+        List<Seg> segs = new ArrayList<>();
+        List<String> on = consonantUnits(onset);
+        for (int i = 0; i < on.size(); i++) addConsonant(segs, on.get(i), grp);
+        double onTotal = 0;
+        for (Seg g : segs) onTotal += g.dur;
+        double maxOn = dur * 0.35;
+        if (onTotal > maxOn && onTotal > 0) for (Seg g : segs) g.dur *= maxOn / onTotal;
+        List<Seg> tail = new ArrayList<>();
+        List<String> cu = consonantUnits(coda);
+        boolean tailOk = dur > 0.22;
+        if (tailOk) for (int i = 0; i < cu.size() && i < 2; i++) addConsonant(tail, cu.get(i), "");
+        double tTotal = 0;
+        for (Seg g : tail) tTotal += g.dur;
+        double maxT = dur * 0.2;
+        if (tTotal > maxT && tTotal > 0) for (Seg g : tail) g.dur *= maxT / tTotal;
+        onTotal = 0;
+        for (Seg g : segs) onTotal += g.dur;
+        tTotal = 0;
+        for (Seg g : tail) tTotal += g.dur;
+        double vd = Math.max(0.05, dur - onTotal - tTotal);
+        Seg vow = new Seg(vf[0], vf[1], vf[2], vd, nasal ? 0.8 : 1.0, 0);
+        segs.add(vow);
+        segs.addAll(tail);
+
+        int n = Math.max(1, (int) (dur * rate));
+        float[] y = new float[n];
+        double f0 = 440.0 * Math.pow(2.0, (midi - 69) / 12.0);
+        double c1 = vf[0] * scale, c2 = vf[1] * scale, c3 = vf[2] * scale; // formants courants
+        double vG = 0, nG = 0;
+        double[] z1 = new double[3], z2 = new double[3];
+        double[] A = new double[3], B = new double[3], C = new double[3];
+        double[] bw = {85, 110, 150};
+        double[] gain = {1.0, 1.9, 1.8};
+        double ph = 0, prevN = 0, lp = 0, prevFlow = 0, prevD = 0;
+        long seed = syl.hashCode() * 2654435761L + midi;
+        Random rnd = new Random(seed);
+        int pos = 0;
+        for (int si = 0; si < segs.size(); si++) {
+            Seg g = segs.get(si);
+            int len = (int) Math.round(g.dur * rate);
+            if (si == segs.size() - 1) len = n - pos;
+            double t1 = g.f1 * scale, t2 = g.f2 * scale, t3 = g.f3 * scale;
+            for (int i = 0; i < len && pos < n; i++, pos++) {
+                if ((pos & 15) == 0) {
+                    c1 += (t1 - c1) * 0.2; c2 += (t2 - c2) * 0.2; c3 += (t3 - c3) * 0.2;
+                    double[] ff = {c1, c2, Math.min(c3, rate * 0.45)};
+                    for (int j = 0; j < 3; j++) {
+                        double r = Math.exp(-Math.PI * bw[j] / rate);
+                        A[j] = 2 * r * Math.cos(2 * Math.PI * Math.min(ff[j], rate * 0.45) / rate);
+                        B[j] = -r * r;
+                        C[j] = 1 - r;
+                    }
+                }
+                vG += (g.voice - vG) * 0.01;
+                nG += (g.noise - nG) * 0.05;
+                double sec = pos / (double) rate;
+                double scoop = Math.pow(2.0, -1.0 / 12.0 * Math.max(0, 1 - sec / 0.07));
+                double vib = 1 + Math.min(1.0, Math.max(0, (sec - 0.18) / 0.35)) * 0.012 * Math.sin(2 * Math.PI * 5.4 * sec);
+                ph += f0 * scoop * vib / rate;
+                ph -= Math.floor(ph);
+                // onde glottale de Rosenberg (ouverture lente, fermeture rapide) dérivée : timbre de voix riche
+                double flow = ph < 0.6 ? 0.5 * (1 - Math.cos(Math.PI * ph / 0.6))
+                        : ph < 0.7 ? Math.cos(Math.PI * 0.5 * (ph - 0.6) / 0.1) : 0;
+                double d = (flow - prevFlow) * 22.0;
+                prevFlow = flow;
+                double src = d + 1.2 * (d - prevD) + (rnd.nextDouble() - 0.5) * 0.03; // légère accentuation des aigus
+                prevD = d;
+                double o = 0;
+                for (int j = 0; j < 3; j++) {
+                    double v = C[j] * src * vG + A[j] * z1[j] + B[j] * z2[j];
+                    z2[j] = z1[j];
+                    z1[j] = v;
+                    o += v * gain[j];
+                }
+                double w = rnd.nextGaussian();
+                double hpn = w - prevN;
+                prevN = w;
+                lp += (w - lp) * 0.3;
+                o += nG * (g.hp ? hpn : lp) * 0.6;
+                y[pos] = (float) o;
+            }
+        }
+        // attaque / relâchement doux
+        int fi = (int) (0.006 * rate), fo = (int) Math.min(0.06 * rate, n * 0.3);
+        for (int i = 0; i < n; i++) {
+            float gg = 1f;
+            if (i < fi) gg = i / (float) fi;
+            if (n - i < fo) gg = Math.min(gg, (n - i) / (float) fo);
+            y[i] *= gg;
+        }
+        float peak = 0;
+        for (float v : y) peak = Math.max(peak, Math.abs(v));
+        if (peak > 0) { float k = 0.5f / peak; for (int i = 0; i < n; i++) y[i] *= k; }
+        return y;
+    }
+
+    // ------------------------------------------------------------------ Voix de secours « la la la »
+    /**
+     * Voix chantée entièrement synthétique (voyelle « a » : onde riche filtrée par deux formants).
+     * Sert quand la voix du téléphone n'est pas disponible : la chanson est toujours créée.
+     *
+     * @param kind 0 = grave (homme), 1 = médium, 2 = aigu (enfant)
+     */
+    public static float[] vowel(int midi, double dur, int kind) {
+        int rate = SongSynth.SR;
+        int n = Math.max(1, (int) (dur * rate));
+        float[] y = new float[n];
+        double f = 440.0 * Math.pow(2.0, (midi - 69) / 12.0);
+        double[] fm = kind == 0 ? new double[]{650, 1080} : kind == 1 ? new double[]{800, 1250} : new double[]{950, 1500};
+        double[] bw = {90, 110};
+        double[] y1 = new double[2], y2 = new double[2];
+        double[] cA = new double[2], cB = new double[2], cC = new double[2];
+        for (int j = 0; j < 2; j++) {
+            double r = Math.exp(-Math.PI * bw[j] / rate);
+            cA[j] = 2 * r * Math.cos(2 * Math.PI * fm[j] / rate);
+            cB[j] = -r * r;
+            cC[j] = 1 - r;
+        }
+        double ph = 0;
+        for (int i = 0; i < n; i++) {
+            double sec = i / (double) rate;
+            double vib = 1 + Math.min(1.0, sec / 0.3) * 0.009 * Math.sin(2 * Math.PI * 5.3 * sec);
+            ph += f * vib / rate;
+            ph -= Math.floor(ph);
+            double src = (1 - 2 * ph) * (1 - ph * 0.2); // dent de scie adoucie
+            double o = 0;
+            for (int j = 0; j < 2; j++) {
+                double v = cC[j] * src + cA[j] * y1[j] + cB[j] * y2[j];
+                y2[j] = y1[j];
+                y1[j] = v;
+                o += v * (j == 0 ? 1.0 : 0.6);
+            }
+            y[i] = (float) o;
+        }
+        finish(y, rate);
         return y;
     }
 }

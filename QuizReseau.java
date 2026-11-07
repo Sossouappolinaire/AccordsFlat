@@ -62,6 +62,18 @@ final class QuizReseau {
         try { return rpc("quiz_revele", new JSONObject().put("p_salon", salon).put("p_num", num)); } catch (Exception e) { return null; }
     }
 
+    // ---------------------------------------------------------------- photos de profil
+
+    /** Envoie ma photo (base64) à la base ; null ou vide pour la retirer. */
+    static JSONObject definirPhoto(String photo64) {
+        try { return rpc("quiz_photo_definir", new JSONObject().put("p_photo", photo64 == null ? "" : photo64)); } catch (Exception e) { return null; }
+    }
+
+    /** Photos des joueurs d'un salon : {ok, photos:{cle: base64}}. */
+    static JSONObject photos(String salon) {
+        try { return rpc("quiz_photos", new JSONObject().put("p_salon", salon)); } catch (Exception e) { return null; }
+    }
+
     // ---------------------------------------------------------------- points gagnés et retraits
 
     /** Mes points gagnés : {ok, points, victoires, gain, attente:{montant}, dernier}. */

@@ -85,6 +85,7 @@ public class JeuFootActivity extends Activity {
         float phase, stamina = 1f, vit = 1f;
         float stun, glisse, lock, kick, decide, tacleCd, prot, hold;
         boolean sprint, plongeon, glisseTente;
+        int face = 1;                       // 1 : regarde à droite, -1 : à gauche (le joueur reste debout)
     }
 
     private static final class VueFoot extends View {
@@ -1298,8 +1299,8 @@ public class JeuFootActivity extends Activity {
                     if (q.glisse <= 0f) q.stun = 0.55f;
                     continue;
                 }
-                float vmax = 78f * gs * q.vit * (q.eq == 1 ? NIV_VIT[niveau] : 1f);
-                if (q.role == GK) vmax = 70f * gs * (q.plongeon ? 2.6f : 1f);
+                float vmax = 112f * gs * q.vit * (q.eq == 1 ? NIV_VIT[niveau] : 1f);
+                if (q.role == GK) vmax = 92f * gs * (q.plongeon ? 2.6f : 1f);
                 float mag = (float) Math.hypot(q.ax, q.ay);
                 if (mag > 1f) {
                     q.ax /= mag;
@@ -1312,7 +1313,7 @@ public class JeuFootActivity extends Activity {
                 if (court) q.stamina = Math.max(0f, q.stamina - dt * (pes ? 0.14f : 0.11f));
                 else q.stamina = Math.min(1f, q.stamina + dt * 0.05f);
                 float tvx = q.ax * vmax * allure, tvy = q.ay * vmax * allure;
-                float acc = 460f * gs * dt;
+                float acc = 700f * gs * dt;
                 q.vx += borne(tvx - q.vx, -acc, acc);
                 q.vy += borne(tvy - q.vy, -acc, acc);
                 q.x += q.vx * dt;
@@ -1577,10 +1578,13 @@ public class JeuFootActivity extends Activity {
         @Override
         protected void onDraw(Canvas c) {
             long now = SystemClock.uptimeMillis();
-            float dt = Math.min(0.034f, (now - dernier) / 1000f);
+            float dt = Math.min(0.06f, (now - dernier) / 1000f);
             dernier = now;
             boolean actif = etat == ENGAGE || etat == JEU || etat == BUT || etat == ARRET;
-            if (actif && (!enLigne || hote)) maj(dt);
+            if (actif && (!enLigne || hote)) {
+                // En deux demi-pas quand l'image est longue : le jeu garde sa vraie vitesse sans devenir instable.
+                if (dt > 0.03f) { maj(dt / 2f); maj(dt / 2f); } else maj(dt);
+            }
             if (enLigne && hote) publierInstantane();
             c.save();
             c.scale(k, k);
@@ -1894,9 +1898,10 @@ public class JeuFootActivity extends Activity {
                 return;
             }
 
-            float angle = (float) Math.toDegrees(Math.atan2(q.dy, q.dx)) + 90f;
-            c.rotate(angle);
-            c.scale(u, u * taille);
+            // Le joueur reste debout (pieds en bas) : on le retourne seulement vers la gauche ou la droite, sans le pencher.
+            if (q.dx > 0.25f) q.face = 1;
+            else if (q.dx < -0.25f) q.face = -1;
+            c.scale(u * q.face, u * taille);
             p.setStrokeCap(Paint.Cap.ROUND);
             p.setStrokeJoin(Paint.Join.ROUND);
 

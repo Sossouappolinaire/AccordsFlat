@@ -44,6 +44,8 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
     private static final String[] SIGS = {"4/4", "3/4", "2/4", "2/2", "6/8", "12/8"};
     private static final String[] VOICES = {"Voix d'homme", "Voix de femme", "Voix d'enfant", "Voix de garçon", "Voix de fille"};
     private static final float[] VOICE_PITCH = {0.75f, 1.15f, 1.5f, 1.35f, 1.6f};
+    /** Timbre de la voix chantée (position des formants). */
+    private static final double[] VOICE_TIMBRE = {0.88, 1.0, 1.14, 1.07, 1.16};
     private static final int BARS_PER_LINE = 2;
     private static final String[] SOLO_CHOICES = {"Aucune", "Solo de piano", "Solo de batterie (roulements)", "Piano puis batterie"};
     private static final String[] SOLO_BARS = {"2 mesures", "4 mesures", "8 mesures"};
@@ -66,6 +68,7 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
     private Spinner spSolo, spSoloBars;
     private EditText lyrics;
     private Button bGo, bStop, bSave;
+    private android.widget.ProgressBar progress;
     private final int[] cnt = {3, 2, 0}; // femmes, hommes, enfants
     private final TextView[] cntLabel = new TextView[3];
 
@@ -76,6 +79,7 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
     private final Handler h = new Handler(Looper.getMainLooper());
     private volatile int gen = 0; // change à chaque arrêt : annule la création en cours
     private int wordSeq = 0;
+    private volatile int usedFallback = 0;
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CountDownLatch> pending =
             new java.util.concurrent.ConcurrentHashMap<>();
     /** Tessiture (MIDI bas, haut) selon la voix choisie. */
@@ -88,26 +92,35 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
-        tts = new TextToSpeech(this, this);
 
         final int p = dp(16);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(AccordsUi.BG);
 
-        // En-tête
+        // En-tête en dégradé
         LinearLayout header = AccordsUi.row(this);
-        header.setPadding(p, p, p, dp(8));
+        header.setPadding(p, dp(18), p, dp(18));
+        header.setBackground(AccordsUi.gradient(0xFF3A2D9C, 0xFF14B8A6, 0));
+        header.setElevation(dp(6));
         Button back = AccordsUi.iconButton(this, "‹");
         back.setOnClickListener(v -> finish());
         header.addView(back, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        LinearLayout titles = new LinearLayout(this);
+        titles.setOrientation(LinearLayout.VERTICAL);
+        titles.setPadding(dp(8), 0, 0, 0);
         TextView title = new TextView(this);
-        title.setText("Créer une chanson");
-        title.setTextSize(20);
+        title.setText("🎤  Créer une chanson");
+        title.setTextSize(21);
         title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setTextColor(AccordsUi.TEXT);
-        title.setPadding(dp(8), 0, 0, 0);
-        header.addView(title);
+        title.setTextColor(Color.WHITE);
+        titles.addView(title);
+        TextView subT = new TextView(this);
+        subT.setText("Écris, choisis l'ambiance, la voix chante");
+        subT.setTextSize(12);
+        subT.setTextColor(0xCCFFFFFF);
+        titles.addView(subT);
+        header.addView(titles);
         root.addView(header);
 
         LinearLayout body = new LinearLayout(this);
@@ -116,7 +129,7 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
 
         // --- Texte ---
         LinearLayout cText = card();
-        cText.addView(section("TEXTE DE LA CHANSON"));
+        cText.addView(section("✍  TEXTE DE LA CHANSON"));
         lyrics = new EditText(this);
         lyrics.setHint("Écris ou colle ton texte ici.\nUne ligne = une phrase chantée.\nUne ligne vide sépare les couplets.\nPour un solo à un endroit précis, écris sur une ligne : [SOLO PIANO] ou [SOLO BATTERIE] (ex. [SOLO PIANO 4] pour 4 mesures).");
         lyrics.setHintTextColor(AccordsUi.MUTED);
@@ -129,11 +142,16 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
         lyrics.setBackground(AccordsUi.solid(0x1AFFFFFF, dp(12)));
         lyrics.setPadding(dp(12), dp(10), dp(12), dp(10));
         cText.addView(lyrics, AccordsUi.lp(this, -1, -2, 8));
+        Button example = AccordsUi.chip(this, "✨  Mettre un exemple");
+        example.setOnClickListener(v -> lyrics.setText(
+                "Le soleil se lève sur la colline\nLes oiseaux chantent la lumière\nMon cœur est plein de joie\nJe loue mon Dieu à genoux\n\n"
+                + "Alléluia pour toujours\nGloire à Toi, mon Sauveur\nTon amour me porte chaque jour\nJe chante avec bonheur"));
+        cText.addView(example, AccordsUi.lp(this, -2, -2, 8));
         body.addView(cText);
 
         // --- Musique ---
         LinearLayout cMusic = card();
-        cMusic.addView(section("MUSIQUE"));
+        cMusic.addView(section("🎹  MUSIQUE"));
         spKey = spinner(KEYS);
         spMode = spinner(MODES);
         spSig = spinner(SIGS);
@@ -170,7 +188,7 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
 
         // --- Instruments ---
         LinearLayout cInst = card();
-        cInst.addView(section("INSTRUMENTS"));
+        cInst.addView(section("🥁  INSTRUMENTS"));
         cbPiano = check("Piano solo", true);
         cbBass = check("Basse", true);
         cbDrums = check("Batterie / percussions", false);
@@ -183,7 +201,7 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
 
         // --- Parties instrumentales ---
         LinearLayout cSolo = card();
-        cSolo.addView(section("PARTIES INSTRUMENTALES"));
+        cSolo.addView(section("🎷  PARTIES INSTRUMENTALES"));
         spSolo = spinner(SOLO_CHOICES);
         spSoloBars = spinner(SOLO_BARS);
         spSoloBars.setSelection(1);
@@ -201,10 +219,10 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
 
         // --- Voix + chœur ---
         LinearLayout cVoice = card();
-        cVoice.addView(section("VOIX"));
+        cVoice.addView(section("🎙  VOIX"));
         spVoice = spinner(VOICES);
         addLabeled(cVoice, "Qui chante", spVoice);
-        TextView choirTitle = section("CHŒUR");
+        TextView choirTitle = section("👥  CHŒUR");
         cVoice.addView(choirTitle, AccordsUi.lp(this, -2, -2, 16));
         counter(cVoice, "Femmes", 0);
         counter(cVoice, "Hommes", 1);
@@ -235,6 +253,12 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
         status.setGravity(Gravity.CENTER);
         cPlay.addView(status, AccordsUi.lp(this, -1, -2, 4));
 
+        progress = new android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progress.setIndeterminate(true);
+        progress.setIndeterminateTintList(ColorStateList.valueOf(AccordsUi.AMBER));
+        progress.setVisibility(View.INVISIBLE);
+        cPlay.addView(progress, AccordsUi.lp(this, -1, dp(4), 10));
+
         bGo = AccordsUi.button(this, "▶  Créer et jouer", AccordsUi.AMBER, AccordsUi.ORANGE, AccordsUi.DARK);
         bGo.setOnClickListener(v -> generate());
         cPlay.addView(bGo, AccordsUi.lp(this, -1, -2, 12));
@@ -253,8 +277,9 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
         body.addView(cPlay, AccordsUi.lp(this, -1, -2, 16));
 
         TextView note = new TextView(this);
-        note.setText("La voix de synthèse chante le texte mot par mot sur une mélodie créée à partir des accords ; "
-                + "le chœur est un « aaah » synthétique. La création de la voix prend un peu de temps.");
+        note.setText("Chaque syllabe est chantée sur une note de la mélodie, construite à partir des accords : "
+                + "voyelle tenue, léger glissando et vibrato. La voix est synthétique (elle ne lit plus le texte) ; "
+                + "le chœur fait « aaah ».");
         note.setTextColor(AccordsUi.MUTED);
         note.setTextSize(11);
         body.addView(note, AccordsUi.lp(this, -1, -2, 10));
@@ -278,10 +303,10 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
     private TextView section(String text) {
         TextView t = new TextView(this);
         t.setText(text);
-        t.setTextSize(11);
-        t.setLetterSpacing(0.15f);
+        t.setTextSize(12);
+        t.setLetterSpacing(0.12f);
         t.setTypeface(Typeface.DEFAULT_BOLD);
-        t.setTextColor(AccordsUi.MUTED);
+        t.setTextColor(AccordsUi.AMBER);
         return t;
     }
 
@@ -420,9 +445,9 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
     private float[] buildVocal(SongSynth.Params p, List<Item> items, double barSec, float pitch,
                                int voiceIdx, int myGen) {
         float[] vocal = new float[(int) ((p.bars * barSec + 1.5) * SongSynth.SR)];
-        java.util.HashMap<String, SingVoice.Wav> cache = new java.util.HashMap<>();
         int[] range = VOICE_RANGE[voiceIdx];
-        int done = 0, ok = 0, lineNo = 0;
+        final double timbre = VOICE_TIMBRE[voiceIdx];
+        int done = 0, ok = 0, lineNo = 0, fallback = 0;
         for (Item it : items) {
             if (it.kind != 0) continue;
             List<SingVoice.Note> notes = SingVoice.melody(p, it.text, it.startBar * barSec, it.bars * barSec,
@@ -430,22 +455,16 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
             lineNo++;
             for (SingVoice.Note n : notes) {
                 if (gen != myGen) return null;
-                String key = n.word.toLowerCase(Locale.ROOT);
-                SingVoice.Wav w = cache.get(key);
-                if (w == null && !cache.containsKey(key)) {
-                    w = speakToWav(n.word, pitch);
-                    cache.put(key, w);
-                }
                 done++;
-                if (w == null) continue;
-                float[] y = SingVoice.sing(w.pcm, w.sr, n.midi, n.dur);
-                int at = (int) (n.start * SongSynth.SR);
-                for (int i = 0; i < y.length && at + i < vocal.length; i++) vocal[at + i] += y[i] * 0.55f;
+                float[] y = SingVoice.sungSyllable(n.word, n.midi, n.dur, timbre);
                 ok++;
+                int at = (int) (n.start * SongSynth.SR);
+                for (int i = 0; i < y.length && at + i < vocal.length; i++) vocal[at + i] += y[i] * 0.6f;
                 final int d = done;
-                runOnUiThread(() -> status.setText("Création de la voix chantée… (" + d + " mots)"));
+                runOnUiThread(() -> status.setText("Création de la voix chantée… (" + d + " syllabes)"));
             }
         }
+        usedFallback = fallback;
         return ok > 0 ? vocal : null;
     }
 
@@ -575,8 +594,9 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
 
         stopAll(null);
         final int myGen = gen;
-        final boolean sing = ttsReady;
+        final boolean sing = true; // la voix de secours chante même sans voix de synthèse
         bGo.setEnabled(false);
+        progress.setVisibility(View.VISIBLE);
         status.setText("Création de la musique… (cela peut prendre un moment)");
         lineNow.setText("");
         new Thread(() -> {
@@ -590,13 +610,14 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
                     }
                 }
                 if (gen != myGen) {
-                    runOnUiThread(() -> bGo.setEnabled(true));
+                    runOnUiThread(() -> { bGo.setEnabled(true); progress.setVisibility(View.INVISIBLE); });
                     return;
                 }
                 pcm = SongSynth.render(p);
             } catch (Throwable e) {
                 runOnUiThread(() -> {
                     bGo.setEnabled(true);
+                    progress.setVisibility(View.INVISIBLE);
                     status.setText("Erreur : " + e.getMessage());
                 });
                 return;
@@ -604,6 +625,7 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
             final short[] result = pcm;
             runOnUiThread(() -> {
                 bGo.setEnabled(true);
+                progress.setVisibility(View.INVISIBLE);
                 if (isFinishing() || gen != myGen) return;
                 lastPcm = result;
                 bSave.setEnabled(true);
@@ -631,7 +653,7 @@ public class SongActivity extends Activity implements TextToSpeech.OnInitListene
             status.setText("Lecture impossible : " + e.getMessage());
             return;
         }
-        status.setText(sung ? "En lecture…" : "En lecture (voix de synthèse française indisponible : musique seule)");
+        status.setText(sung ? "♪ En lecture…" : "En lecture (musique seule)");
 
         int bar = 1;
         for (Item it : items) {
