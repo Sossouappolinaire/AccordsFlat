@@ -237,6 +237,11 @@
             android:screenOrientation="portrait" />
 
         <activity
+            android:name=".JeuCasseBriquesActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
             android:name=".FacebookActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize">
