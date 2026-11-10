@@ -22,6 +22,10 @@ jobs:
             mkdir -p app/src/main/res/drawable-nodpi
             mv kouame_playbox_hero.jpg app/src/main/res/drawable-nodpi/kouame_playbox_hero.jpg
           fi
+      - name: Images du jeu GTA Mini
+        run: |
+          mkdir -p app/src/main/res/drawable-nodpi
+          mv gta_*.png app/src/main/res/drawable-nodpi/
       - name: Ressources Accords & Musique
         run: |
           mkdir -p app/src/main/res/drawable app/src/main/res/values
