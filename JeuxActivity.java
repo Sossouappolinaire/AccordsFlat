@@ -16,12 +16,12 @@ import org.json.JSONObject;
 
 import java.util.HashMap;
 
-/** Menu « JEUX » : Panda Dash, Super Kouamé (style Mario), Serpent, Commando Kouamé (tir et action), Liquide (tri de couleurs), Combat Mortel (robot ou joueur en ligne), Football Kouamé (arcade) et Foot Pro Kouamé (simulation). Les records sont gardés sur le téléphone. */
+/** Menu « JEUX » : Panda Dash, Super Kouamé (style Mario), Serpent, Commando Kouamé (tir et action), Liquide (tri de couleurs), Combat Mortel (robot ou joueur en ligne), Football Kouamé (arcade), Foot Pro Kouamé (simulation) et GTA Kouamé (monde ouvert : voitures, police, missions). Les records sont gardés sur le téléphone. */
 public class JeuxActivity extends Activity {
 
     private static final String PREFS = "jeux";
 
-    private static final String[] JEUX = {"panda", "mario", "serpent", "commando", "liquide", "motard", "foot", "pes", "quiz", "casse"};
+    private static final String[] JEUX = {"panda", "mario", "serpent", "commando", "liquide", "motard", "foot", "pes", "quiz", "casse", "gta"};
 
     /** Par jeu : [0] mon record, [1] meilleur joueur de tous les joueurs. */
     private final HashMap<String, TextView[]> champs = new HashMap<>();
@@ -41,11 +41,42 @@ public class JeuxActivity extends Activity {
         }
     }
 
+    private static String nomJeu(String cle) {
+        switch (cle) {
+            case "panda": return "Panda Dash";
+            case "mario": return "Super Kouamé";
+            case "serpent": return "Serpent";
+            case "commando": return "Commando Kouamé";
+            case "liquide": return "Liquide";
+            case "casse": return "Cœur Casse-Briques";
+            case "gta": return "GTA Kouamé";
+            default: return cle;
+        }
+    }
+
+    private static String aujourdhui() {
+        java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US);
+        f.setTimeZone(java.util.TimeZone.getTimeZone("Africa/Porto-Novo"));
+        return f.format(new java.util.Date());
+    }
+
+    /** Meilleur score fait aujourd'hui sur ce téléphone pour ce jeu (0 si aucun). */
+    static int recordDuJour(Context c, String cle) {
+        SharedPreferences sp = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        return aujourdhui().equals(sp.getString("jour_" + cle, "")) ? sp.getInt("jourscore_" + cle, 0) : 0;
+    }
+
     static void enregistrer(Context c, String cle, int valeur) {
         SharedPreferences sp = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        if (valeur > sp.getInt(cle, 0)) {
-            sp.edit().putInt(cle, valeur).apply();
-            ScoresJeux.envoyer(cle, valeur);     // classement partagé par tous les joueurs
+        boolean record = valeur > sp.getInt(cle, 0);
+        boolean duJour = ScoresJeux.solo(cle) && valeur > recordDuJour(c, cle);
+        if (record) sp.edit().putInt(cle, valeur).apply();
+        if (duJour) sp.edit().putString("jour_" + cle, aujourdhui()).putInt("jourscore_" + cle, valeur).apply();
+        if (record) {
+            ScoresJeux.envoyer(cle, valeur);     // classement partagé par tous les joueurs (envoie aussi le score du jour)
+        } else if (duJour) {
+            final int v = valeur;                // pas un record, mais le meilleur score d'aujourd'hui : compte pour le prix du jour
+            new Thread(() -> ScoresJeux.envoyerJourSync(cle, v)).start();
         }
     }
 
@@ -61,6 +92,7 @@ public class JeuxActivity extends Activity {
 
         Ui.ajouter(root, Ui.texte(this, "🎮 Jeux", 28, Ui.JAUNE, true), 0);
         Ui.ajouter(root, Ui.texte(this, "Choisissez un jeu et battez votre record !", 14, Ui.TXT2, false), 4);
+        Ui.ajouter(root, Ui.texte(this, "🎁 Jeux solo : le meilleur score de la journée de chaque jeu gagne 10 F, à condition d'avoir progressé (battre son propre meilleur score d'avant). Payé le lendemain, de minuit à minuit.", 13, Ui.VERT, true), 6);
 
         carte(root, "panda", "🐼", "Panda Dash",
                 "Cours, saute, ramasse les pièces et écrase les scarabées rouges jusqu'au drapeau.",
@@ -86,6 +118,11 @@ public class JeuxActivity extends Activity {
                 "Casse-briques néon : brise les cœurs, attrape les bonus (raquette large, trois boules, ralenti), enchaîne les combos et évite les astéroïdes.",
                 0xFFC2185B, 0xFF5E35B1,
                 new Intent(this, JeuCasseBriquesActivity.class));
+
+        carte(root, "gta", "🚗", "GTA Kouamé",
+                "Monde ouvert : une grande ville vue de dessus. Vole des voitures, tire, évite la police (jusqu'à 5 étoiles), livre des colis et gagne un maximum d'argent.",
+                0xFF263238, 0xFF1E78DC,
+                new Intent(this, JeuGtaActivity.class));
 
         carte(root, "commando", "🔫", "Commando Kouamé",
                 "Un jeu d'action et de tir comme les anciens jeux de console : cours, saute, tire sur les soldats et détruis le robot de chaque niveau.",
@@ -132,10 +169,30 @@ public class JeuxActivity extends Activity {
             if (!internet(this)) return;          // hors ligne : on joue avec les records du téléphone, rien à envoyer
             for (String jeu : JEUX) {
                 ScoresJeux.envoyerSync(jeu, record(this, jeu));
+                ScoresJeux.envoyerJourSync(jeu, recordDuJour(this, jeu));   // renvoie le meilleur score d'aujourd'hui si l'envoi avait échoué
                 String t = ScoresJeux.actualiser(jeu);
                 runOnUiThread(() -> {
                     TextView[] f = champs.get(jeu);
                     if (f != null) f[1].setText(texteMonde(t));
+                });
+            }
+            JSONArray prix = ScoresJeux.payerJours();
+            if (prix != null && prix.length() > 0) {
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < prix.length(); i++) {
+                    JSONObject o = prix.optJSONObject(i);
+                    if (o == null) continue;
+                    sb.append("• ").append(nomJeu(o.optString("jeu"))).append(" (").append(o.optString("jour")).append(") : score ")
+                            .append(o.optInt("score")).append(" → +").append(o.optInt("points")).append(" F\n");
+                }
+                final String txt = sb.toString().trim();
+                runOnUiThread(() -> {
+                    if (isFinishing()) return;
+                    new AlertDialog.Builder(this)
+                            .setTitle("🎁 Bravo, meilleur score du jour !")
+                            .setMessage(txt + "\n\nCes points sont ajoutés à vos points gagnés (menu Questions pour un champion).")
+                            .setPositiveButton("OK", null)
+                            .show();
                 });
             }
         }).start();

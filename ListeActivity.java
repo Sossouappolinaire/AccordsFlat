@@ -173,12 +173,9 @@ public class ListeActivity extends Activity {
             }
         }
         if (!reseau) {   // vidéos téléchargées d'avance
-            File dossier = getExternalFilesDir(Environment.DIRECTORY_MOVIES);
-            File[] fichiers = dossier == null ? null : dossier.listFiles();
-            if (fichiers != null)
-                for (File f : fichiers)
-                    if (f.isFile() && garder(f.getName(), Uri.fromFile(f).toString()))
-                        ajouterEntree(f.getName(), Uri.fromFile(f).toString());
+            for (File f : Dossiers.videos(this))     // TvKouame/Telechargement + anciens dossiers
+                if (garder(f.getName(), Uri.fromFile(f).toString()))
+                    ajouterEntree(f.getName(), Uri.fromFile(f).toString());
         }
     }
 

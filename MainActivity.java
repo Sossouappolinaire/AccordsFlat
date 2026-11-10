@@ -60,6 +60,18 @@ public class MainActivity extends Activity {
         }
         ProgrammeAlarme.planifier(this);
 
+        // Dossier « TvKouame/Telechargement » dans le stockage : créé dès que l'autorisation est donnée (demandée une fois).
+        Dossiers.creer(this);
+        if (!Dossiers.autorise(this) && !Dossiers.dejaDemande(this)) {
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle("Dossier TvKouame")
+                    .setMessage("Pour créer le dossier « TvKouame » dans le stockage du téléphone, où seront rangées toutes "
+                            + "les vidéos téléchargées (TvKouame/Telechargement), autorisez l'accès aux fichiers.")
+                    .setPositiveButton("Autoriser", (d, w) -> Dossiers.demanderAcces(this))
+                    .setNegativeButton("Plus tard", null)
+                    .show();
+        }
+
         int p = Ui.dp(this, 18);
 
         LinearLayout root = new LinearLayout(this);
@@ -282,6 +294,7 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (!Compte.connecte()) return;
+        Dossiers.creer(this);     // crée TvKouame/Telechargement si l'autorisation vient d'être donnée
         new Thread(() -> {
             Supabase.battement();
             Compte.verifierAdmin();

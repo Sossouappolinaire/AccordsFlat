@@ -261,6 +261,7 @@ public class FacebookActivity extends Activity {
     private volatile int generation = 0;
     private volatile boolean annule = false;
     private volatile boolean enCours = false;
+    private volatile boolean analyseEnCours = false;   // analyse du lien en cours (continue en arrière-plan)
     private volatile String etape = "";
     private VideoView apercu;
     private FrameLayout cadreApercu;
@@ -302,7 +303,21 @@ public class FacebookActivity extends Activity {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        FbFondService.visible = true;
+    }
+
+    @Override
+    protected void onStop() {
+        FbFondService.visible = false;
+        super.onStop();
+    }
+
+    @Override
     protected void onDestroy() {
+        FbFondService.visible = false;
+        FbFondService.arreter(getApplicationContext());
         generation++;
         annule = true;
         arreterApercu();
@@ -316,6 +331,17 @@ public class FacebookActivity extends Activity {
             quitterPleinApercu();
             return;
         }
+        if (analyseEnCours) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Analyse en cours")
+                    .setMessage("L'analyse peut continuer en arrière-plan : vous pouvez utiliser votre téléphone, "
+                            + "une notification vous prévient dès que les boutons de téléchargement sont prêts.")
+                    .setPositiveButton("Continuer en arrière-plan", (d, w) -> moveTaskToBack(true))
+                    .setNeutralButton("Annuler l'analyse", (d, w) -> annulerWeb())
+                    .setNegativeButton("Rester ici", null)
+                    .show();
+            return;
+        }
         if (panneauWeb.getVisibility() == View.VISIBLE) {
             annulerWeb();
             return;
@@ -323,12 +349,13 @@ public class FacebookActivity extends Activity {
         if (enCours) {
             new AlertDialog.Builder(this)
                     .setTitle("Téléchargement en cours")
-                    .setMessage("Annuler le téléchargement et quitter ?")
-                    .setPositiveButton("Annuler et quitter", (d, w) -> {
+                    .setMessage("Le téléchargement continue en arrière-plan si vous quittez l'écran (la notification montre l'avancement).")
+                    .setPositiveButton("Continuer en arrière-plan", (d, w) -> moveTaskToBack(true))
+                    .setNeutralButton("Annuler et quitter", (d, w) -> {
                         annule = true;
                         finish();
                     })
-                    .setNegativeButton("Continuer", null)
+                    .setNegativeButton("Rester ici", null)
                     .show();
             return;
         }
@@ -669,6 +696,9 @@ public class FacebookActivity extends Activity {
         viderResultats();
         barreCacher();
         tvEtat.setText("Analyse du lien…");
+        analyseEnCours = true;
+        FbFondService.demarrer(getApplicationContext(), "📘 Analyse du lien Facebook…",
+                "L'analyse continue en arrière-plan. Touchez pour revenir.");
         new Thread(() -> {
             final Res r = analyserPage(lien);
             h.post(() -> {
@@ -881,6 +911,11 @@ public class FacebookActivity extends Activity {
     // =====================================================================
 
     private void lancerWeb(final String lien, final int g) {
+        if (!analyseEnCours) {
+            analyseEnCours = true;
+            FbFondService.demarrer(getApplicationContext(), "📘 Analyse du lien Facebook…",
+                    "L'analyse continue en arrière-plan. Touchez pour revenir.");
+        }
         nettoyerWeb();
         captures.clear();
         premiereTrouvaille = 0;
@@ -954,6 +989,7 @@ public class FacebookActivity extends Activity {
                         return;
                     }
                     nettoyerWeb();
+                    finAnalyse(false);
                     tvEtat.setText("⚠ Aucun lien de téléchargement trouvé, même après avoir ouvert la page. "
                             + "La vidéo est peut-être privée, Facebook demande une connexion, ou la page a changé.");
                     return;
@@ -1070,6 +1106,7 @@ public class FacebookActivity extends Activity {
 
     private void annulerWeb() {
         generation++;
+        finAnalyse(false);
         nettoyerWeb();
         tvEtat.setText("Recherche annulée.");
     }
@@ -1078,7 +1115,18 @@ public class FacebookActivity extends Activity {
     //  Choix du format : 2 cartes, puis confirmation, puis téléchargement
     // =====================================================================
 
+    /** Fin de l'analyse : arrête le service de fond ; si les cartes sont prêtes et que l'écran n'est pas visible, prévient par notification. */
+    private void finAnalyse(boolean pret) {
+        analyseEnCours = false;
+        if (!enCours) FbFondService.arreter(getApplicationContext());
+        if (pret) {
+            FbFondService.notifierFin(getApplicationContext(), "✅ Vidéo Facebook prête",
+                    "Touchez pour choisir SD ou HD et télécharger.");
+        }
+    }
+
     private void afficher(final Res r) {
+        finAnalyse(r.sd != null || r.hd != null || r.dashV != null);
         if (titreSaisi != null && !titreSaisi.isEmpty()) r.titre = titreSaisi;
         nettoyerWeb();
         viderResultats();
@@ -1382,8 +1430,9 @@ public class FacebookActivity extends Activity {
                 .setMessage("Voulez-vous télécharger cette vidéo au format " + format + " ?\n\n"
                         + "⏱ Durée : " + formatDuree(p.dureeMs) + "\n"
                         + "💾 Taille : " + (p.tailleTotale() > 0 ? formatTaille(p.tailleTotale()) : "non communiquée par Facebook")
-                        + "\n\nElle sera enregistrée dans « Téléchargements > Vidéos Facebook téléchargées ».\n"
-                        + "Pour une longue vidéo, gardez l'écran allumé et l'application ouverte jusqu'à la fin.")
+                        + "\n\nElle sera enregistrée dans le dossier « TvKouame/Telechargement » du téléphone "
+                        + "(et dans « Téléchargements > Vidéos Facebook téléchargées »).\n"
+                        + "Le téléchargement continue en arrière-plan si vous quittez l'application.")
                 .setPositiveButton("Télécharger", (d, w) -> telecharger(p))
                 .setNegativeButton("Annuler", null)
                 .show();
@@ -1398,19 +1447,35 @@ public class FacebookActivity extends Activity {
             toast("Un téléchargement est déjà en cours");
             return;
         }
+        if (!Dossiers.autorise(this)) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Dossier TvKouame")
+                    .setMessage("Pour ranger les vidéos dans le dossier « TvKouame/Telechargement » du stockage de votre "
+                            + "téléphone, autorisez l'accès aux fichiers. Sans autorisation, elles sont rangées dans le "
+                            + "même dossier à l'intérieur de l'application.")
+                    .setPositiveButton("Autoriser", (d, w) -> Dossiers.demanderAcces(this))
+                    .setNegativeButton("Continuer sans", (d, w) -> demarrerTelechargement(p))
+                    .show();
+            return;
+        }
+        demarrerTelechargement(p);
+    }
+
+    private void demarrerTelechargement(final Plan p) {
+        if (enCours) return;
         arreterApercu();
         enCours = true;
         annule = false;
         etape = "";
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);   // longue vidéo : écran allumé
         barreDebut("Téléchargement " + p.nom.toUpperCase(Locale.ROOT), "Connexion…");
+        FbFondService.demarrer(getApplicationContext(), "📘 Téléchargement " + p.nom.toUpperCase(Locale.ROOT), "Connexion…");
         threadDl = new Thread(() -> executer(p));
         threadDl.start();
     }
 
     private void executer(Plan p) {
-        File dir = getExternalFilesDir(Environment.DIRECTORY_MOVIES);
-        if (dir == null) dir = getFilesDir();
+        File dir = Dossiers.telechargement(this);     // TvKouame/Telechargement
         dir.mkdirs();
         final String nom = "facebook_" + p.nom + "_" + System.currentTimeMillis() + ".mp4";
         final File finale = new File(dir, nom);
@@ -1460,10 +1525,12 @@ public class FacebookActivity extends Activity {
             }
             final String finInfo = nom + " · " + formatTaille(taille)
                     + (reelMs > 0 ? " · " + formatDuree(reelMs) : "")
-                    + "\nRetrouvez-le dans Téléchargements → Vidéos Facebook téléchargées." + alerte;
+                    + "\nRangée dans le dossier " + (Dossiers.dossierPublic(this) ? "TvKouame/Telechargement" : "TvKouame/Telechargement de l'application")
+                    + " (voir aussi Téléchargements → Vidéos Facebook téléchargées)." + alerte;
             final boolean complet = alerte.isEmpty();
             final String lienCompte = dernierLien;
             new Thread(() -> Supabase.compterTelechargement(lienCompte)).start();
+            Dossiers.indexer(getApplicationContext(), finale);
             if (complet) Telecharges.enregistrer(getApplicationContext(), lienCompte, finale);   // mémoire locale : « Lire » au lieu de « Télécharger »
             h.post(() -> barreFin(true, complet ? "✅ Téléchargement terminé" : "⚠ Téléchargement terminé (incomplet)", finInfo));
         } catch (Exception e) {
@@ -1475,9 +1542,11 @@ public class FacebookActivity extends Activity {
             h.post(() -> {
                 if (a) {
                     enCours = false;
+                    FbFondService.arreter(getApplicationContext());
                     barreCacher();
                 } else if (basculer) {
                     enCours = false;
+                    FbFondService.arreter(getApplicationContext());
                     barreCacher();
                     basculerWeb("Facebook refuse le lien direct. Lecture de la page pour obtenir un lien valide…");
                 } else {
@@ -1697,6 +1766,10 @@ public class FacebookActivity extends Activity {
 
     private void progresser(final long lu, final long total, final float debut, final float fin) {
         final String et = etape;
+        if (total > 0) {
+            final int pct = (int) ((debut + (fin - debut) * Math.min(1f, (float) lu / total)) * 100);
+            FbFondService.maj(getApplicationContext(), "📘 Téléchargement en cours", pct + " % · " + formatTaille(lu), pct);
+        }
         h.post(() -> {
             if (!enCours) return;
             if (total <= 0) {
@@ -1808,6 +1881,9 @@ public class FacebookActivity extends Activity {
 
     private void barreFin(boolean ok, String titre, String info) {
         enCours = false;
+        if (!analyseEnCours) FbFondService.arreter(getApplicationContext());
+        FbFondService.notifierFin(getApplicationContext(), ok ? "✅ Vidéo téléchargée" : "⚠ Téléchargement impossible",
+                ok ? "Rangée dans TvKouame/Telechargement." : "Touchez pour réessayer.");
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         barre.setVisibility(View.VISIBLE);
         tvDlTitre.setText(titre);

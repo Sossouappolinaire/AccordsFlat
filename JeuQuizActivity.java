@@ -270,6 +270,7 @@ public class JeuQuizActivity extends Activity {
     private void chargerGains() {
         final int g = generation;
         new Thread(() -> {
+            ScoresJeux.payerJours();     // ajoute d'abord les prix du jour des jeux solo
             final JSONObject r = QuizReseau.mesGains();
             runOnUiThread(() -> {
                 if (!vivant || g != generation || tvGains == null) return;

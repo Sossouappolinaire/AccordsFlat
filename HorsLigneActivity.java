@@ -72,13 +72,8 @@ public class HorsLigneActivity extends Activity {
     protected void onResume() {
         super.onResume();
         int fb = 0, autres = 0;
-        File dossier = getExternalFilesDir(Environment.DIRECTORY_MOVIES);
-        File[] fichiers = dossier == null ? null : dossier.listFiles();
-        if (fichiers != null) {
-            for (File f : fichiers) {
-                if (!f.isFile()) continue;
-                if (f.getName().startsWith("facebook_")) fb++; else autres++;
-            }
+        for (File f : Dossiers.videos(this)) {      // TvKouame/Telechargement + anciens dossiers
+            if (f.getName().startsWith("facebook_")) fb++; else autres++;
         }
         nbFacebook.setText(compte(fb, "Téléchargées depuis « Télécharger Facebook »"));
         nbAutres.setText(compte(autres, "Liens directs et fichiers que vous avez ajoutés"));
@@ -155,7 +150,8 @@ public class HorsLigneActivity extends Activity {
             DownloadManager.Request r = new DownloadManager.Request(Uri.parse(url));
             r.setTitle(nom);
             r.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-            r.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_MOVIES, nom);
+            if (Dossiers.dossierPublic(this)) r.setDestinationUri(Uri.fromFile(new File(Dossiers.telechargement(this), nom)));   // TvKouame/Telechargement
+            else r.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_MOVIES, nom);
             ((DownloadManager) getSystemService(DOWNLOAD_SERVICE)).enqueue(r);
             final String lienCompte = url;
             new Thread(() -> Supabase.compterTelechargement(lienCompte)).start();   // visible par l'administrateur
