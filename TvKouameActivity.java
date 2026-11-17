@@ -114,6 +114,13 @@ public class TvKouameActivity extends Activity {
     private int variante = 0;                      // laquelle on essaie (0 = la plus simple)
     private String prefetch = "";
 
+    // Chaîne TV en direct branchée sur TV Kouamé (bouton « Regarder une chaîne en direct », et secours quand il n'y a pas de programme)
+    private boolean direct = false, directAuto = false;
+    private List<ChaineDirect.Chaine> directListe = null;
+    private int directPos = 0, directEssais = 0, directGen = 0;
+    private long directSync = 0;
+    private Button bDirect, bAutre;
+
     // ------------------------------------------------------------------ cycle de vie
 
     @Override
@@ -197,6 +204,16 @@ public class TvKouameActivity extends Activity {
         plein = Ui.boutonContour(this, "⛶ Plein écran", Ui.TXT);
         plein.setOnClickListener(v -> basculerPlein());
         Ui.ajouter(c, plein, 8);
+        bDirect = Ui.bouton(this, "📡 Regarder une chaîne en direct", Ui.BLEU);
+        bDirect.setOnClickListener(v -> {
+            if (direct) arreterDirect();
+            else demarrerDirect(false);
+        });
+        Ui.ajouter(c, bDirect, 8);
+        bAutre = Ui.boutonContour(this, "⏭ Autre chaîne", Ui.TXT);
+        bAutre.setVisibility(View.GONE);
+        bAutre.setOnClickListener(v -> chaineSuivante());
+        Ui.ajouter(c, bAutre, 8);
 
         titreProgramme = Ui.texte(this, "Programme du jour", 18, Ui.TXT, true);
         Ui.ajouter(c, titreProgramme, 20);
@@ -229,7 +246,11 @@ public class TvKouameActivity extends Activity {
         pubManuelle = -1;
         differe = false;
         debutCourant = -1;                 // on revient au direct, à la bonne minute
-        synchroniser(true);
+        if (direct) {                      // on était sur une chaîne en direct : on la relance
+            jouerDirect();
+            directSync = SystemClock.elapsedRealtime();
+            h.postDelayed(tickRun, 1000);
+        } else synchroniser(true);
     }
 
     @Override
@@ -238,6 +259,7 @@ public class TvKouameActivity extends Activity {
         pubManuelle = -1;
         h.removeCallbacks(tickRun);
         generation++;
+        directGen++;
         if (tts != null) tts.stop();
         if (player != null) player.pause();
         super.onPause();
@@ -270,6 +292,10 @@ public class TvKouameActivity extends Activity {
         player.addListener(new Player.Listener() {
             @Override
             public void onPlayerError(PlaybackException e) {
+                if (direct) {                   // chaîne en direct qui ne démarre pas : on essaie la suivante
+                    echecChaine();
+                    return;
+                }
                 if (pubManuelle >= 0) {         // bande d'annonce illisible pendant une publicité à la demande : on passe à la suivante
                     pubManuelleNum++;
                     jouerBandeManuelle();
@@ -301,6 +327,10 @@ public class TvKouameActivity extends Activity {
             @Override
             public void onRenderedFirstFrame() {
                 voile(null);                    // l'image est là : on retire le message
+                if (direct && directListe != null && !directListe.isEmpty()) {
+                    directEssais = 0;
+                    ChaineDirect.retenir(TvKouameActivity.this, directListe.get(directPos % directListe.size()));
+                }
             }
 
             @Override
@@ -398,8 +428,29 @@ public class TvKouameActivity extends Activity {
         }
         dernierMaintenant = now;
 
+        if (direct) {
+            if (directAuto && !progs.isEmpty() && totalMs > 0) {                  // le programme est arrivé : on y retourne
+                arreterDirect();
+                return;
+            }
+            long delai = progs.isEmpty() ? 15_000L : 10 * 60_000L;
+            if (SystemClock.elapsedRealtime() - directSync > delai) {
+                directSync = SystemClock.elapsedRealtime();
+                synchroniser(false);
+            }
+            h.postDelayed(tickRun, 1000);
+            return;
+        }
+
         majTitreProgramme();
         if (progs.isEmpty() || totalMs <= 0) {
+            if (!direct) {                                   // pas de programme : une chaîne en direct passe en attendant
+                demarrerDirect(true);
+                directSync = SystemClock.elapsedRealtime();
+                synchroniser(false);
+                h.postDelayed(tickRun, 1000);
+                return;
+            }
             ecranAttente("📭 Pas encore de programme. Il se fabrique tout seul chaque jour à 00h00 "
                     + "avec les films de « Films partagés ».");
             majBandeau("📺 TV K · Nouveau programme chaque jour à 00h00 · Ajoutez vos films dans « Films partagés »");
@@ -863,6 +914,98 @@ public class TvKouameActivity extends Activity {
         suivant.setText("Le direct reprend à la fin de la publicité.");
         revoir.setText("🔴 Revenir en direct");
         pubVue.setVisibility(View.VISIBLE);
+    }
+
+    // ------------------------------------------------------------------ chaîne en direct
+
+    /** Branche une chaîne TV en direct (celles de l'écran Télévision qui marchent) sur l'écran de TV Kouamé. */
+    private void demarrerDirect(boolean auto) {
+        direct = true;
+        directAuto = auto;
+        differe = false;
+        pubManuelle = -1;
+        debutCourant = -1;
+        generation++;
+        directListe = ChaineDirect.candidats(this);          // relue à chaque fois : de nouvelles chaînes ont pu être validées
+        directPos = 0;
+        directEssais = 0;
+        majBoutonsDirect();
+        jouerDirect();
+    }
+
+    private void majBoutonsDirect() {
+        bDirect.setText(direct ? "↩ Revenir au programme TV Kouamé" : "📡 Regarder une chaîne en direct");
+        bAutre.setVisibility(direct ? View.VISIBLE : View.GONE);
+    }
+
+    private void jouerDirect() {
+        if (player == null) creerLecteur();
+        if (directListe == null || directListe.isEmpty()) {
+            voile("📡 Aucune chaîne vérifiée pour le moment. TV Kouamé ne diffuse que les chaînes qui marchent : "
+                    + "ouvrez l'écran Télévision, lancez l'analyse « Chaînes qui marchent » (ou validez une chaîne en la regardant), puis revenez ici.");
+            return;
+        }
+        final int gen = ++directGen;
+        final ChaineDirect.Chaine ch = directListe.get(directPos % directListe.size());
+        etat.setText("🔴 Chaîne en direct");
+        titreV.setText("📡 " + ch.nom);
+        heure.setText(directAuto ? "En attendant le programme du jour de TV Kouamé" : "Branchée sur TV Kouamé");
+        barre.setProgress(0);
+        suivant.setText("");
+        majBandeau("📡 " + ch.nom + " · chaîne en direct sur TV Kouamé");
+        voile("⏳ " + ch.nom + " : connexion…");
+        try {
+            player.setMediaItem(MediaItem.fromUri(ch.url));
+            player.prepare();
+            player.play();
+        } catch (Exception e) {
+            echecChaine();
+            return;
+        }
+        h.postDelayed(() -> {                          // une chaîne qui ne démarre pas en 15 s : on passe à la suivante
+            if (!direct || gen != directGen || player == null) return;
+            if (player.getPlaybackState() != Player.STATE_READY) echecChaine();
+        }, 15_000L);
+    }
+
+    /** La chaîne ne démarre pas : on essaie la suivante, jusqu'à avoir fait le tour de la liste. */
+    private void echecChaine() {
+        if (!direct || directListe == null || directListe.isEmpty()) return;
+        if (++directEssais >= directListe.size()) {
+            directEssais = 0;
+            directGen++;
+            if (player != null) {
+                player.stop();
+                player.clearMediaItems();
+            }
+            voile("⚠ Aucune des chaînes qui marchent ne répond pour le moment. Vérifiez votre connexion internet, "
+                    + "ou relancez l'analyse dans l'écran Télévision.");
+            return;
+        }
+        directPos++;
+        jouerDirect();
+    }
+
+    /** Bouton « Autre chaîne ». */
+    private void chaineSuivante() {
+        if (!direct || directListe == null || directListe.isEmpty()) return;
+        directEssais = 0;
+        directPos++;
+        jouerDirect();
+    }
+
+    private void arreterDirect() {
+        direct = false;
+        directAuto = false;
+        directGen++;
+        if (player != null) {
+            player.stop();
+            player.clearMediaItems();
+        }
+        majBoutonsDirect();
+        debutCourant = -1;
+        voile("Chargement du programme…");
+        tick();
     }
 
     // ------------------------------------------------------------------ boutons

@@ -24,7 +24,7 @@ public class JeuxActivity extends Activity {
     private static final String[] JEUX = {"panda", "mario", "serpent", "commando", "liquide", "motard", "foot", "pes", "quiz", "casse", "gta"};
 
     /** Par jeu : [0] mon record, [1] meilleur joueur de tous les joueurs. */
-    private final HashMap<String, TextView[]> champs = new HashMap<>();
+    private final HashMap<String, java.util.List<TextView[]>> champs = new HashMap<>();   // une clé de jeu peut avoir deux cartes (GTA 2D et GTA 3D)
 
     static int record(Context c, String cle) {
         return c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(cle, 0);
@@ -124,6 +124,11 @@ public class JeuxActivity extends Activity {
                 0xFF263238, 0xFF1E78DC,
                 new Intent(this, JeuGtaActivity.class));
 
+        carte(root, "gta", "🏙️", "GTA Kouamé 3D",
+                "La même ville mais en 3D : conduis à la vue de derrière, vole des voitures, tire, échappe à la police et livre des colis. Même classement que GTA Kouamé.",
+                0xFF1B1F3B, 0xFFD81B60,
+                new Intent(this, JeuGta3dActivity.class));
+
         carte(root, "commando", "🔫", "Commando Kouamé",
                 "Un jeu d'action et de tir comme les anciens jeux de console : cours, saute, tire sur les soldats et détruis le robot de chaque niveau.",
                 0xFF37474F, 0xFFFF5722,
@@ -160,9 +165,10 @@ public class JeuxActivity extends Activity {
     protected void onResume() {
         super.onResume();
         for (String jeu : JEUX) {
-            TextView[] f = champs.get(jeu);
-            f[0].setText("🏆 Mon record : " + record(this, jeu));
-            f[1].setText(texteMonde(ScoresJeux.meilleur(jeu)));
+            for (TextView[] f : champs.get(jeu)) {
+                f[0].setText("🏆 Mon record : " + record(this, jeu));
+                f[1].setText(texteMonde(ScoresJeux.meilleur(jeu)));
+            }
         }
         // Renvoie mes records (au cas où l'envoi avait échoué hors connexion) et relit les meilleurs scores de tous.
         new Thread(() -> {
@@ -172,8 +178,8 @@ public class JeuxActivity extends Activity {
                 ScoresJeux.envoyerJourSync(jeu, recordDuJour(this, jeu));   // renvoie le meilleur score d'aujourd'hui si l'envoi avait échoué
                 String t = ScoresJeux.actualiser(jeu);
                 runOnUiThread(() -> {
-                    TextView[] f = champs.get(jeu);
-                    if (f != null) f[1].setText(texteMonde(t));
+                    java.util.List<TextView[]> fl = champs.get(jeu);
+                    if (fl != null) for (TextView[] f : fl) f[1].setText(texteMonde(t));
                 });
             }
             JSONArray prix = ScoresJeux.payerJours();
@@ -266,7 +272,7 @@ public class JeuxActivity extends Activity {
         classement.setPadding(0, Ui.dp(this, 8), Ui.dp(this, 12), Ui.dp(this, 4));
         classement.setOnClickListener(v -> afficherClassement(jeu, titre));
         col.addView(classement);
-        champs.put(jeu, new TextView[]{rec, monde});
+        champs.computeIfAbsent(jeu, x -> new java.util.ArrayList<>()).add(new TextView[]{rec, monde});
 
         LinearLayout.LayoutParams lc = new LinearLayout.LayoutParams(0, -2, 1f);
         lc.leftMargin = Ui.dp(this, 14);
