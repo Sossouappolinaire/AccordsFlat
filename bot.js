@@ -1,0 +1,2709 @@
+// bot.js — bot Telegram + boucle de prédiction/vérification
+const TelegramBot = require('node-telegram-bot-api');
+const config = require('./config');
+const api = require('./api');
+const store = require('./store');
+const db = require('./db');
+const predit = require('./predit');
+const game21Predict = require('./game21-predict');
+const auth = require('./auth');
+const aiAuto = require('./ai-auto');
+const ai = require('./ai-analyzer');
+const aiQa = require('./ai-qa');
+const fmt = require('./formats');
+const statusAnimator = require('./status-animator');
+const sendDelay = require('./send-delay');
+const midnightReset = require('./midnight-reset');
+const sendDedupe = require('./send-dedupe'); // anti-doublon des messages et prédictions envoyés aux canaux
+const strategyRecap = require('./strategy-recap');
+const strategies = require('./strategies');
+const afterLoss = require('./after-loss');
+const copyAnnounce = require('./copy-announce');
+const betType = require('./bet-type');
+const combined = require('./combined');
+const suitStreak = require('./suit-streak');
+const dizaineTop = require('./dizaine-top');
+const bestWeakTop = require('./best-weak-top');
+const lossReturn = require('./loss-return'); // « Retour après perte » (v47)
+const lossRelaunch = require('./loss-relaunch'); // « Relance après perte » (v57)
+const confirmation = require('./confirmation'); // « Confirmation » (v140)
+const apkCall = require('./apk-call'); // « Appel APK » (v145)
+const prevSuit = require('./prev-suit'); // « Costume N-1 → +4 » (v93)
+const miracle = require('./miracle-prediction'); // « Miracle prediction » (v129)
+const miracleSerie = require('./miracle-serie'); // « Miracle série » (v148)
+const parityEgalite = require('./parity-egalite'); // « Palier parité égalité » : 2e taux quand deux taux faibles sont égaux
+const distributionFaible = require('./distribution-faible'); // « Distribution faible » : distribution au taux le plus faible du Compte distribution (v125)
+const parityPalier = require('./parity-palier'); // « Palier parité » : costume au plus faible pourcentage du palier du Compte parité (v114)
+const endDigitTrio = require('./end-digit-trio'); // « Trio fin de numéro » : 3 meilleures fins de numéro par dizaine + suivi dans un autre canal (v127)
+const endDigitPredict = require('./end-digit-predict'); // « Prédiction fin de numéro » : meilleur / repli faible + inverse (v101)
+const canalTelegram = require('./canal-telegram'); // « Canal Telegram » : un canal = une stratégie (v99)
+const channelUniform = require('./channel-uniform'); // « Canal Telegram » v103 : format / rattrapage / bilan 2 h uniformes par canal coché
+const gameStability = require('./game-stability'); // « Stabilité du jeu » (désactivée par défaut)
+const channelAdmin = require('./channel-admin'); // commande /envois (chat privé de l'admin)
+const absenceAlert = require('./absence-alert'); // « Alerte absence de costume » (chat privé de l'admin)
+const analyseManque = require('./analyse-manque'); // « Analyse manque » (bot dédié : costume manquant 4 jeux de suite / réapparition)
+const channelLossGate = require('./channel-loss-gate'); // « Envoi après perte » par canal, planifié dans l'Excel
+const costumeFaibleTop = require('./costume-faible-top');
+const suitBreak = require('./suit-break');
+const overlap = require('./overlap');
+const statistics = require('./statistics');
+const cardsCount = require('./cards-count');
+const drawTwoThree = require('./draw-two-three');
+const victoireVb = require('./victoire-vb');
+const vip = require('./vip');
+const formationRelay = require('./formation-relay');
+const shoeReport = require('./shoe-report');
+const aiRepair = require('./ai-repair');
+const mirrorCounter = require('./mirror-counter');
+const parityCounter = require('./parity-counter');
+const distributionCounter = require('./distribution-counter'); // « Compte distribution » : 2/2, 3/2, 3/3, 2k, 3k (v100)
+const slowMode = require('./slow-mode');
+const dataTransfer = require('./data-transfer');
+const lossNotice = require('./loss-notice');
+const predictionControl = require('./prediction-control');
+const {
+  state, evaluate, verify, registerGames, setOnFinished, setOnShoeReset, setOnGateChange, setOnConfirm,
+  predictionText, predictionMessage, liveText, stats, SUITS,
+  initStrategies, setStrategyConfig, resetStrategy, strategyChannels, parityRuntime,
+  bilanText, canSend, noteGateSent, gateView, autoView, noteSent, shadowRuntime, sweepAutoUnlock, unlockGate,
+  fulfillAnnouncement, announcementsFor, queueFloor,
+  setOnAnnouncementSave, setOnAnnouncementDelete, restoreAnnouncements, restorePredictions,
+} = require('./predictor');
+
+let bot = null;
+let loopStarted = false;
+
+const saved = store.read();
+state.botToken = saved.botToken || config.BOT_TOKEN || '';
+state.adminId = saved.adminId || config.ADMIN_ID;
+if (Array.isArray(saved.channels)) state.channels = saved.channels;
+if (Array.isArray(saved.activeChannels)) state.activeChannels = saved.activeChannels;
+// CORRECTIF « le site doit marcher même sans base de données » (demande
+// admin) : si ni le disque local (vidé à chaque redémarrage Render Free) ni
+// la base (non connectée / expirée) n'ont de canaux actifs enregistrés, on
+// se rabat sur ACTIVE_CHANNELS (variable d'environnement Render, durable —
+// voir config.js) plutôt que de démarrer avec une liste vide où aucune
+// stratégie de base n'aurait où envoyer.
+if (!state.activeChannels.length && config.ACTIVE_CHANNELS.length) {
+  state.activeChannels = config.ACTIVE_CHANNELS.slice();
+}
+if (Array.isArray(saved.siteChannels)) state.siteChannels = saved.siteChannels;
+if (saved.B) state.B = saved.B;
+if (saved.maxR != null) state.maxR = saved.maxR;
+state.hand = 'joueur';
+if (saved.format) state.format = saved.format;
+if (saved.template !== undefined) state.template = saved.template;
+if (saved.strategies && typeof saved.strategies === 'object') state.strategies = saved.strategies;
+if (Array.isArray(saved.aiAnalyses)) state.aiAnalyses = saved.aiAnalyses;
+if (Array.isArray(saved.aiStrategies)) state.aiStrategies = saved.aiStrategies;
+initStrategies();
+
+// numéro de sabot (state.shoeSeq) pour lequel le bilan a déjà été envoyé —
+// persisté pour ne pas en renvoyer un second après un redémarrage.
+let lastBilanShoeSeq = saved.lastBilanShoeSeq || 0;
+
+// CORRECTIF « bilan pendant l'envoi des prédictions » : le hook de reset de
+// sabot (setOnShoeReset) est appelé en « fire-and-forget » par
+// resetShoe()/registerGames() — nécessaire pour ne jamais bloquer
+// resetShoe(), qui doit rester synchrone (d'autres écouteurs en dépendent :
+// shoe-report.js, after-loss.js). On ne lance donc PAS flushBilans()
+// directement depuis ce hook : on se contente de MÉMORISER qu'un bilan est
+// dû, et c'est tick() ci-dessous qui l'exécute et l'ATTEND explicitement,
+// juste après registerGames() et AVANT evaluate()/broadcast() — donc avant
+// toute diffusion de prédiction du nouveau jour. Comme les tick() ne se
+// chevauchent jamais (garde `ticking`), le bilan est ainsi garanti de
+// s'envoyer intégralement, un jour à la fois, sans jamais se mélanger avec
+// l'envoi des prédictions.
+let pendingBilan = null;
+
+// CORRECTIF : quand `persist()` est appelée alors que la base n'est pas
+// joignable (coupure, veille Render Free…), l'écriture DB est silencieusement
+// SAUTÉE — sans ce drapeau, rien ne se souvenait qu'un changement (ex. nouvel
+// ID de canal) restait en attente. Résultat observé : à la reconnexion,
+// `ensureDb()` relisait la DB (ancienne valeur) VERS l'état local et écrasait
+// le changement qui n'avait jamais pu être enregistré — sur le moment ET
+// après un redémarrage, puisque la DB (jamais mise à jour) reste la source
+// de vérité au prochain démarrage.
+let dbDirty = false;
+
+function persist() {
+  store.patch({
+    botToken: state.botToken,
+    adminId: state.adminId,
+    channels: state.channels,
+    activeChannels: state.activeChannels,
+    siteChannels: state.siteChannels,
+    B: state.B,
+    maxR: state.maxR,
+    hand: 'joueur',
+    format: state.format,
+    template: state.template,
+    strategies: state.strategies,
+    aiAnalyses: state.aiAnalyses,
+    aiStrategies: state.aiStrategies,
+    lastBilanShoeSeq,
+  });
+  if (db.ready) {
+    // configuration complète (token, admin, canaux) : elle est relue au démarrage
+    db.saveAppConfig({
+      botToken: state.botToken || '',
+      adminId: state.adminId || 0,
+      channels: state.channels || [],
+      activeChannels: state.activeChannels || [],
+      siteChannels: state.siteChannels || [],
+      B: state.B,
+      maxR: state.maxR,
+      format: state.format,
+      template: state.template || '',
+      savedAt: new Date().toISOString(),
+    });
+    db.setSetting('site_channels', JSON.stringify(state.siteChannels || []));
+    db.setSetting('B', state.B);
+    db.setSetting('maxR', state.maxR);
+    db.setSetting('format', state.format);
+    db.setSetting('template', state.template || '');
+    // chaque stratégie est enregistrée en base : après un redémarrage le bot
+    // repart exactement avec les configurations déjà enregistrées.
+    for (const def of strategies.LIST) {
+      const cfg = state.strategies[def.key];
+      if (cfg) db.saveStrategy(def.key, def.name, cfg);
+    }
+    dbDirty = false;
+  } else {
+    // la base n'est pas joignable MAINTENANT : le changement est bien dans
+    // data.json et en mémoire, mais pas encore en base. On le marque « en
+    // attente » pour le pousser dès que la connexion revient (voir ensureDb).
+    dbDirty = true;
+  }
+}
+
+const isAdmin = (msg) => msg.from && msg.from.id === Number(state.adminId);
+const deny = (id) => bot && bot.sendMessage(id, "⛔ Commande réservée à l'administrateur.");
+
+function rememberChannel(chat) {
+  if (!chat || !['channel', 'supergroup', 'group'].includes(chat.type)) return;
+  if (!state.channels.some((c) => c.id === chat.id)) {
+    state.channels.push({ id: chat.id, title: chat.title || String(chat.id) });
+    persist();
+    if (bot)
+      bot.sendMessage(
+        state.adminId,
+        `📡 Nouveau canal détecté : *${chat.title}*\n\`${chat.id}\`\n\n` +
+          `Lance \`/activer ${chat.id}\` pour y envoyer les prédictions.`,
+        { parse_mode: 'Markdown' }
+      );
+  }
+}
+
+function listChannels() {
+  if (!state.channels.length) return '_aucun_';
+  return state.channels
+    .map((c) => `${state.activeChannels.includes(c.id) ? '✅' : '⚪'} ${c.title} — \`${c.id}\``)
+    .join('\n');
+}
+
+const HELP =
+  '🎴 *Bot Baccara 1xbet — main du JOUEUR*\n\n' +
+  '*Jeu*\n' +
+  '/live — jeu réellement en cours (cartes + costumes joueur)\n' +
+  '/stats — statistiques des prédictions\n' +
+  '/reglages — réglages actuels\n\n' +
+  '*Canaux*\n' +
+  '/canaux — canaux où je suis admin\n' +
+  '/envois [nom] — stratégies et configurations liées à un canal : voir, activer, pause, supprimer, renommer, changer de canal\n' +
+  '/activer <id> — activer les prédictions\n' +
+  '/nul — liste cliquable des changements trouvés par l\'analyse « Nul / 2-3 » (ajouter / modifier / supprimer une règle)\n' +
+  '/desactiver <id> — arrêter\n\n' +
+  '*Interrupteur des prédictions* (commandes à taper DIRECTEMENT dans le ' +
+  'canal — réservées de fait aux administrateurs de ce canal, Telegram ' +
+  'n\'autorise personne d\'autre à y écrire)\n' +
+  '/stop [raison] — stoppe l\'envoi de TOUTES les nouvelles prédictions\n' +
+  '/start — relance l\'envoi\n' +
+  '/planifier <HH:MM arrêt> <HH:MM reprise> — arrêt/reprise quotidien automatique\n' +
+  '/planifier off — désactive la planification\n' +
+  '/statut — état actuel (arrêté/actif, planification)\n\n' +
+  '*Prédiction*\n' +
+  '/setb <n> — compteur B (apparitions consécutives max)\n' +
+  '/setmaxr <n> — nombre de rattrapages vérifiés\n' +
+  '/setformat <1-107> — style du message de prédiction\n' +
+  '/formats [page] — liste des 107 styles\n' +
+  '/apercu <n> — aperçu complet d\'un style (⌛ / ✅ / ❌)\n' +
+  '/settemplate <texte> — style personnalisé ({game} {emoji} {suit} {status} {maxR})\n' +
+  '/notemplate — revenir au style numéroté\n\n' +
+  '*Stratégies*\n' +
+  '/strategies — liste des stratégies et leur état\n' +
+  '/strategie <clé> — détail + configuration d\'une stratégie\n' +
+  '/activerstrat <clé> — activer une stratégie\n' +
+  '/desactiverstrat <clé> — désactiver une stratégie\n' +
+  '/setstrat <clé> <format|maxr|b|lead|depart|var|decalage|streak|absence|silence|fenetre|template> <valeur>\n' +
+  '/ombre — état de la stratégie « Prédiction dans l\'ombre »\n' +
+  '/ombrecompte — comptage en temps réel du mode silencieux (phase actuelle, référence, écart, décompte, canal utilisé)\n' +
+  '/ombrehistorique — historique des prédictions depuis la perte de référence, avec alerte si ça dépasse la limite configurée\n' +
+  '/ombreannonces [n] — liste des annonces de position publiées (numéro de la perte confirmante + position, en attente ou envoyée), n dernières (20 par défaut)\n' +
+  '/silence <clé> <on|off> [fenêtre] — mode silencieux 1 (réservé à la stratégie « ombre »)\n' +
+  '/debloquer <clé|tout> — débloque immédiatement l\'envoi (déblocage auto après 10 min)\n' +
+  '/filtres — état du filtre « double perte » de chaque stratégie\n' +
+  '/sauverconfig — enregistrer toutes les configurations en base\n' +
+  '/configs — lire les configurations enregistrées en base\n' +
+  '/parite — état complet de la stratégie Pair/Impair (VAR)\n' +
+  '/setparite <départ> <var> <décalage> <rattrapage> — configuration rapide\n' +
+  '/resetstrat <clé> — remettre la configuration par défaut\n' +
+  '/supprimerstrat <clé> — supprimer la configuration en base\n\n' +
+  '*Stratégies IA*\n' +
+  '/ia [n] — liste des stratégies créées par l\'IA (taux actuel et taux le plus bas)\n' +
+  '/ia90 [seuil] — stratégies IA à 90% ou plus SANS jamais descendre sous ce seuil\n' +
+  '/iabilan — bilan des prédictions IA (panneau Prédit)\n' +
+  '/bilan — publier maintenant le bilan complet (toutes stratégies + IA)\n\n' +
+  '*Base de données*\n' +
+  '/setdb <url> — lien PostgreSQL Render\n' +
+  '/db — état de la base\n' +
+  '/copierconfig [jeux] — copier les configurations de la base principale vers la base de secours\n' +
+  '/permuterbases confirmer — la base de secours devient la principale (et inversement), après copie des configurations\n' +
+  '/base — nombre de lignes, dernier jeu, période couverte\n' +
+  '/dates — dates disponibles\n' +
+  '/jeux [2/04/2026] — résumé des jeux d\'une date\n' +
+  '/derniers [n] — derniers jeux enregistrés\n' +
+  '/jeu <numéro> — fiche complète d\'un jeu\n' +
+  '/pred [date] — prédictions enregistrées + taux\n' +
+  '/sql <SELECT ...> — requête de lecture seule\n\n' +
+  '*Export / Import*\n' +
+  '/exporter — envoie un fichier Excel avec toute la configuration (tokens, canaux, format, stratégies, stratégies IA, analyses IA, tous les panneaux)\n' +
+  '/importer — puis envoie un fichier .xlsx (ou envoie-le directement, sans /importer) pour restaurer la configuration\n\n' +
+  '*Site (administrateur)*\n' +
+  '/site — envoie automatiquement le lien du site (réservé aux administrateurs du site)';
+
+// ---------------------------------------------------------------------------
+// Commandes « arrêter / démarrer / planifier les prédictions » (demande
+// admin) — utilisables aussi bien en message privé par l'administrateur
+// général du bot QUE directement dans un canal Telegram par l'administrateur
+// de CE canal (voir le handler channel_post dans wire() plus bas ; Telegram
+// interdit déjà nativement à un non-administrateur de poster dans un canal,
+// donc la seule présence d'un channel_post avec l'une de ces commandes est
+// déjà la preuve qu'elle vient d'un administrateur du canal).
+// ---------------------------------------------------------------------------
+function parsePredictionControlCommand(text) {
+  const t = String(text || '').trim();
+  let m;
+  if ((m = t.match(/^\/stop(?:@\w+)?(?:\s+([\s\S]+))?\s*$/i))) {
+    return { action: 'stop', reason: m[1] ? m[1].trim() : null };
+  }
+  if (/^\/start(?:@\w+)?\s*$/i.test(t)) {
+    return { action: 'start' };
+  }
+  if ((m = t.match(/^\/planifier(?:@\w+)?(?:\s+(off)|\s+(\S+)\s+(\S+))?\s*$/i))) {
+    if (m[1]) return { action: 'schedule-off' };
+    if (m[2] && m[3]) return { action: 'schedule', stopAt: m[2], startAt: m[3] };
+    return { action: 'schedule-status' };
+  }
+  if (/^\/statut(?:@\w+)?\s*$/i.test(t)) {
+    return { action: 'status' };
+  }
+  return null;
+}
+
+function runPredictionControlCommand(cmd, by, chat) {
+  try {
+    // Commande tapée DANS un canal (chat fourni) : elle ne concerne QUE ce
+    // canal — les autres canaux continuent de recevoir leurs prédictions.
+    if (chat) {
+      switch (cmd.action) {
+        case 'stop':
+          predictionControl.pauseChannel(chat, cmd.reason, by);
+          return `⏸️ Prédictions arrêtées pour CE canal${cmd.reason ? ` (${cmd.reason})` : ''}. Les autres canaux continuent normalement.\nEnvoie /start ici pour les relancer.`;
+        case 'start':
+          predictionControl.resumeChannel(chat, by);
+          return '▶️ Prédictions relancées pour ce canal.';
+        case 'schedule':
+          predictionControl.setChannelSchedule(chat, cmd.stopAt, cmd.startAt);
+          return `📅 Planification de CE canal enregistrée : arrêt automatique à ${cmd.stopAt}, reprise automatique à ${cmd.startAt} (tous les jours). Les autres canaux ne sont pas concernés.`;
+        case 'schedule-off':
+          predictionControl.clearChannelSchedule(chat);
+          return '📅 Planification de ce canal désactivée.';
+        case 'schedule-status':
+        case 'status':
+          return predictionControl.channelStatusText(chat);
+        default:
+          return null;
+      }
+    }
+    switch (cmd.action) {
+      case 'stop':
+        predictionControl.pause(cmd.reason, by);
+        return `⏸️ Prédictions arrêtées PARTOUT${cmd.reason ? ` (${cmd.reason})` : ''} — toutes les stratégies, tous les panneaux, sur tous les canaux.\nEnvoie /start pour les relancer partout. (Pour arrêter un seul canal, tape /stop directement dans ce canal.)`;
+      case 'start':
+        predictionControl.resume(by);
+        return '▶️ Prédictions relancées PARTOUT (l\'interrupteur global est levé ; les canaux arrêtés individuellement le restent jusqu\'à leur propre /start).';
+      case 'schedule':
+        predictionControl.setSchedule(cmd.stopAt, cmd.startAt);
+        return `📅 Planification globale enregistrée : arrêt automatique à ${cmd.stopAt}, reprise automatique à ${cmd.startAt} (tous les jours).`;
+      case 'schedule-off':
+        predictionControl.clearSchedule();
+        return '📅 Planification globale désactivée.';
+      case 'schedule-status':
+      case 'status':
+        return predictionControl.statusText();
+      default:
+        return null;
+    }
+  } catch (e) {
+    return `⚠️ ${e.message}`;
+  }
+}
+
+// Garde-fou d'envoi PAR CANAL : tout sendMessage vers un canal arrêté par
+// /stop est retenu (les autres canaux ne sont pas touchés). L'appelant reçoit
+// un message factice sans message_id ; les éditions/suppressions visant ce
+// message factice sont ignorées. Les messages DÉJÀ envoyés avant l'arrêt
+// restent éditables (résultat gagné/perdu). sendMessageUnguarded sert aux
+// réponses aux commandes (/start, /statut…) dans le canal arrêté.
+// Anti-doublon GLOBAL (tous les boutons) : le même texte exact envoyé au même canal dans les 6 secondes
+// est ignoré. Les prédictions et statistiques portent toujours un numéro de jeu : un vrai second envoi
+// identique n'existe pas ; en revanche une double exécution (deux tâches, deux instances) en produisait.
+const recentSends = new Map();
+function isRecentDuplicate(chatId, text) {
+  if (typeof text !== 'string' || !text) return false;
+  const now = Date.now();
+  const key = `${String(chatId).toLowerCase()}|${text}`;
+  const prev = recentSends.get(key);
+  recentSends.set(key, now);
+  if (recentSends.size > 400) for (const [k, t] of recentSends) { if (now - t > 6000) recentSends.delete(k); }
+  return prev !== undefined && now - prev < 6000;
+}
+
+function installChannelGuard(inst) {
+  if (!inst || inst.__channelGuard) return inst;
+  inst.__channelGuard = true;
+  const send = inst.sendMessage.bind(inst);
+  const edit = inst.editMessageText.bind(inst);
+  inst.sendMessageUnguarded = send;
+  const doSend = function guardedSend(chatId, rest, fromQueue) {
+    // « Canal Telegram » (channel-uniform.js) : prédiction réécrite dans le format imposé au canal coché (jamais bloquant : sinon message d'origine)
+    if (!fromQueue) { const u = channelUniform.rewrite(chatId, rest[0], rest[1]); if (u) rest = [u.text, u.opts, ...rest.slice(2)]; }
+    if (predictionControl.isChannelPaused(chatId) || gameStability.isBlocked(chatId)) { // arrêt du canal OU jeu instable (voir game-stability.js)
+      return Promise.resolve({ message_id: null, chat: { id: chatId }, date: Math.floor(Date.now() / 1000), skipped: true });
+    }
+    // « Envoi après perte » par canal (channel-loss-gate.js) : planning de l'Excel ; une prédiction est retenue tant qu'aucune perte n'a eu lieu dans le canal
+    // + « Canal Telegram » (channel-uniform.js) : mode du jour du canal (favorable / instable 2 = 1 perte / instable 1 = 2 pertes)
+    if (!fromQueue && (channelLossGate.shouldBlock(chatId, rest[0]) || channelUniform.shouldBlock(chatId, rest[0]))) {
+      return Promise.resolve({ message_id: null, chat: { id: chatId }, date: Math.floor(Date.now() / 1000), skipped: true, gated: true });
+    }
+    if (!fromQueue && isRecentDuplicate(chatId, rest[0])) { // même message, même canal, quelques secondes plus tôt
+      state.dupSkipped = (state.dupSkipped || 0) + 1;
+      return Promise.resolve({ message_id: null, chat: { id: chatId }, date: Math.floor(Date.now() / 1000), skipped: true });
+    }
+    // Anti-doublon persistant (send-dedupe.js) : même message ou même jeu + costume déjà envoyé dans ce canal → ignoré (réservation en base)
+    const go = (ddKeys) => {
+    // « Ralentisseur » (slow-mode.js) : canal ralenti + jeu futur dont le précédent n'a pas commencé → message retenu, envoi automatique plus tard
+    if (!fromQueue && slowMode.shouldHold(chatId, rest[0])) return Promise.resolve(slowMode.hold(chatId, rest));
+    // prédiction « en cours » → animation du statut (status-animator.js)
+    return Promise.resolve(send(chatId, ...rest)).then((m) => {
+      try { statusAnimator.maybeTrack(edit, chatId, m, rest[0], rest[1]); } catch (_) { /* l'animation ne doit jamais bloquer l'envoi */ }
+      // « Retour après perte » : le bot ne reçoit pas ses propres publications de canal ; chaque message envoyé (toute stratégie,
+      // tout bouton) est donc transmis ici, depuis ce point d'envoi unique (voir loss-return.js)
+      try { if (m && !m.skipped && typeof rest[0] === 'string') lossReturn.onOwnPost(chatId, rest[0]); } catch (_) { /* suivi seulement */ }
+      // « Relance après perte » : même lecture des messages envoyés par le bot (voir loss-relaunch.js)
+      try { if (m && !m.skipped && typeof rest[0] === 'string') lossRelaunch.onOwnPost(chatId, rest[0]); } catch (_) { /* suivi seulement */ }
+      // « Confirmation » : même lecture des messages envoyés par le bot (voir confirmation.js)
+      try { if (m && !m.skipped && typeof rest[0] === 'string') confirmation.onOwnPost(chatId, rest[0]); } catch (_) { /* suivi seulement */ }
+      // « Appel APK » : une prédiction lancée dans un canal choisi → ligne dans Supabase, l'APK sonne (voir apk-call.js)
+      try { if (m && !m.skipped && typeof rest[0] === 'string') apkCall.onOwnPost(chatId, rest[0]); } catch (_) { /* suivi seulement */ }
+      // « Costume N-1 → +4 » : lecture des prédictions envoyées par les stratégies / configurations cochées (voir prev-suit.js)
+      try { if (m && !m.skipped && typeof rest[0] === 'string') prevSuit.onOwnPost(chatId, rest[0]); } catch (_) { /* suivi seulement */ }
+      // « Miracle prediction » : lecture des prédictions de toutes les stratégies suivies (voir miracle-prediction.js)
+      try { if (m && !m.skipped && typeof rest[0] === 'string') miracle.onOwnPost(chatId, rest[0]); } catch (_) { /* suivi seulement */ }
+      // « Miracle série » : même lecture des prédictions suivies (voir miracle-serie.js)
+      try { if (m && !m.skipped && typeof rest[0] === 'string') miracleSerie.onOwnPost(chatId, rest[0]); } catch (_) { /* suivi seulement */ }
+      // « Canal Telegram » : un canal où ce bot publie peut aussi être une stratégie (voir canal-telegram.js)
+      try { if (m && !m.skipped && typeof rest[0] === 'string') canalTelegram.onOwnPost(chatId, rest[0]); } catch (_) { /* suivi seulement */ }
+      return m;
+    }, (err) => { sendDedupe.release(ddKeys); throw err; });
+    };
+    if (fromQueue) return go([]);
+    return sendDedupe.claim(chatId, rest[0]).then((c) => {
+      if (!c.ok) {
+        state.dupSkipped = (state.dupSkipped || 0) + 1;
+        return { message_id: null, chat: { id: chatId }, date: Math.floor(Date.now() / 1000), skipped: true, duplicate: true };
+      }
+      return go(c.keys);
+    });
+  };
+  inst.sendMessage = function guardedSendEntry(chatId, ...rest) { return doSend(chatId, rest, false); };
+  slowMode.start((chatId, args) => doSend(chatId, args, true)); // envoi réel des messages retenus par le ralentisseur
+  inst.editMessageText = function guardedEdit(text, opts) {
+    { const u = channelUniform.rewrite(opts && opts.chat_id, text, opts); if (u) { text = u.text; opts = u.opts; } } // résultat (✅ / ❌) dans le même format que l'envoi
+    { const r = slowMode.resolveEdit(text, opts); if (r.action === 'done') return Promise.resolve(true); opts = r.opts; } // message encore retenu / identifiant virtuel du ralentisseur
+    if (opts && (opts.message_id === null || opts.message_id === undefined) && opts.inline_message_id === undefined) return Promise.resolve(true);
+    const key = statusAnimator.keyFromOpts(opts);
+    if (key && statusAnimator.has(key)) {
+      // nouveau texte « en cours » : l'animation continue ; sinon (résultat final)
+      // elle s'arrête et l'édition finale passe en dernier.
+      if (statusAnimator.matchPending(text)) return statusAnimator.rebase(key, text).then(() => edit(text, opts));
+      return statusAnimator.stop(key).then(() => edit(text, opts));
+    }
+    return edit(text, opts);
+  };
+  if (typeof inst.deleteMessage === 'function') {
+    const del = inst.deleteMessage.bind(inst);
+    inst.deleteMessage = function guardedDelete(chatId, messageId, ...rest) {
+      { const r = slowMode.resolveDelete(messageId); if (r.action === 'done') return Promise.resolve(true); messageId = r.id; }
+      if (messageId === null || messageId === undefined) return Promise.resolve(true);
+      statusAnimator.stop(`${chatId}:${messageId}`).catch(() => {});
+      return del(chatId, messageId, ...rest);
+    };
+  }
+  return inst;
+}
+
+function settingsText() {
+  return (
+    `⚙️ *Réglages*\n` +
+    `• Compteur B : *${state.B}*\n` +
+    `• Rattrapages : *${state.maxR}*\n` +
+    `• Main vérifiée : *joueur uniquement*\n` +
+    `• Format : *${state.format}/${fmt.FORMAT_COUNT}*${state.template ? ' (template perso)' : ''}\n` +
+    `• Compteurs : ${SUITS.map((s) => `${s}${state.counters[s]}`).join(' ')}\n` +
+    `• Base de données : ${db.status().ready ? '🟢 connectée' : '🔴 non connectée'}`
+  );
+}
+
+function fmtDate(d) {
+  if (!d) return '—';
+  const s = d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
+  const [y, mo, da] = s.split('-');
+  return da ? `${da}/${mo}/${y}` : s;
+}
+
+// Complète le nom des canaux de la liste (state.channels) qui n'en ont pas : après un import, les canaux
+// retrouvés dans les boutons n'avaient que leur ID. Best-effort, sans jamais bloquer l'import.
+async function fillChannelTitles(b) {
+  try {
+    const missing = (state.channels || []).filter((c) => c && c.id != null && !c.title).slice(0, 60);
+    await Promise.all(missing.map(async (c) => {
+      try { const chat = await b.getChat(c.id); if (chat && chat.title) c.title = String(chat.title).slice(0, 120); } catch (_) { /* bot absent du canal */ }
+    }));
+  } catch (_) { /* ignoré */ }
+}
+
+function wire(b) {
+  b.on('polling_error', (e) => {
+    state.botError = e.message;
+    // CORRECTIF « le token ne répond à aucune commande » : si un webhook est
+    // encore actif sur ce token (configuré une fois par erreur, ou laissé par
+    // un ancien hébergement), Telegram refuse TOUT getUpdates avec une erreur
+    // 409 Conflict — le bot peut alors continuer d'ENVOYER des prédictions,
+    // mais ne reçoit plus jamais aucune commande. On supprime donc le webhook
+    // dès qu'on voit ce conflit, puis le polling reprend tout seul.
+    if (/409|conflict|webhook/i.test(e.message || '')) {
+      b.deleteWebHook().catch(() => {});
+    }
+  });
+  b.on('my_chat_member', (u) => {
+    const status = u.new_chat_member && u.new_chat_member.status;
+    if (['administrator', 'member', 'creator'].includes(status)) rememberChannel(u.chat);
+  });
+  // Nouveau membre dans le canal des meilleures prédictions : message de bienvenue + récapitulatif
+  b.on('chat_member', (u) => {
+    try { console.log(`[chat_member] ${u.chat && (u.chat.title || u.chat.id)} : ${(u.old_chat_member || {}).status} → ${(u.new_chat_member || {}).status} (${u.new_chat_member && u.new_chat_member.user && u.new_chat_member.user.id})`); } catch (_) { /* journal seulement */ }
+    Promise.resolve(costumeFaibleTop.handleMemberUpdate(u)).catch(() => {});
+    Promise.resolve(dizaineTop.handleMemberUpdate(u)).catch(() => {});
+  });
+
+  // ---------------------------------------------------------------------
+  // Commandes envoyées DANS un canal (channel_post) — CORRECTIF : avant,
+  // seules /stop /start /planifier /statut étaient reconnues ici, toutes les
+  // autres commandes (/statut, /strategies, /ombre, /ia…) restaient sans
+  // réponse quand on les écrivait dans le canal d'une stratégie, parce que
+  // node-telegram-bot-api n'applique ses handlers onText() qu'aux messages
+  // (update.message), jamais aux publications de canal (update.channel_post).
+  // On rejoue donc chaque publication de canal à travers les handlers
+  // onText() du bot, exactement comme un message privé de l'admin.
+  // ---------------------------------------------------------------------
+  b.on('channel_post', (m) => {
+    rememberChannel(m.chat);
+    if (!m.text) return;
+    // « Détection auto » : un message au format à deux costumes (♦️ 100%─────┐ / N°1438 / ♣️ 92% ─────┘) enregistre ce canal
+    // dans la liste des canaux détectés et alimente les configurations qui le suivent (voir best-weak-top.js)
+    try { bestWeakTop.onChannelPost(m.chat, m.text); } catch (_) { /* détection seulement */ }
+    try { lossReturn.onChannelPost(m.chat, m.text); } catch (_) { /* suivi seulement */ }
+    try { lossRelaunch.onChannelPost(m.chat, m.text); } catch (_) { /* suivi seulement */ }
+    try { confirmation.onChannelPost(m.chat, m.text); } catch (_) { /* suivi seulement */ }
+    try { apkCall.onChannelPost(m.chat, m.text); } catch (_) { /* suivi seulement */ }
+    try { canalTelegram.onChannelPost(m.chat, m.text); } catch (_) { /* suivi seulement */ }
+    const cmd = parsePredictionControlCommand(m.text);
+    if (cmd) {
+      const reply = runPredictionControlCommand(cmd, `canal « ${m.chat.title || m.chat.id} »`, m.chat);
+      const raw = b.sendMessageUnguarded || b.sendMessage.bind(b); // la réponse doit passer même si le canal est arrêté
+      if (reply) raw(m.chat.id, reply).catch(() => {});
+      return;
+    }
+    if (!m.text.startsWith('/')) return;
+    // Telegram interdit nativement à un non-administrateur de publier dans un
+    // canal : la seule présence de cette publication prouve qu'elle vient d'un
+    // administrateur du canal. On la présente donc aux handlers onText() comme
+    // venant de l'administrateur du bot (les commandes réservées à l'admin
+    // restent ainsi utilisables depuis le canal).
+    const asMessage = {
+      ...m,
+      from: m.from || { id: Number(state.adminId) || 0, is_bot: false, first_name: 'Canal' },
+    };
+    try { b.processUpdate({ update_id: 0, message: asMessage }); }
+    catch (e) { console.error('Commande de canal :', e.message); }
+  });
+
+  // Message de canal modifié (résultats ✅0️⃣ / ❌ ajoutés) : le canal reste « détecté », sans relancer la surveillance
+  b.on('edited_channel_post', (m) => {
+    try { if (m && m.text) { rememberChannel(m.chat); bestWeakTop.onChannelPost(m.chat, m.text, { edited: true }); } } catch (_) { /* détection seulement */ }
+    // « Canal Telegram » : une prédiction déjà lue n'est jamais recomptée (clé canal + jeu + costume) ; une publication éditée rattrape seulement une lecture manquée
+    try { if (m && m.text) canalTelegram.onChannelPost(m.chat, m.text); } catch (_) { /* suivi seulement */ }
+  });
+
+  // « Écrire au bot » : tout message texte envoyé en privé qui n'est PAS une
+  // commande (ne commence pas par /) est transmis à l'IA générale
+  // (ai-qa.js) qui répond au nom de « Bak Sossou IA » en s'appuyant sur les
+  // vraies données du bot. isAdmin détermine seulement si les détails
+  // techniques d'une éventuelle erreur IA sont visibles (jamais montrés à un
+  // utilisateur normal).
+  b.on('message', async (msg) => {
+    if (!msg.text || msg.text.startsWith('/')) return;
+    if (!msg.chat || msg.chat.type !== 'private') return;
+
+    try {
+      const entry = await aiQa.ask(msg.text, { isAdmin: isAdmin(msg) });
+      await b.sendMessage(msg.chat.id, entry.answer);
+    } catch (_) {
+      // question vide ou erreur imprévue : on reste silencieux plutôt que
+      // de spammer l'utilisateur avec un message d'erreur technique.
+    }
+  });
+
+  // CORRECTIF : /start, /stop, /planifier et /statut n'étaient traités QUE
+  // dans un canal (handler channel_post ci-dessus) — en message privé ou dans
+  // un groupe, le bot ne répondait donc rien du tout, ce qui donnait
+  // l'impression que « le token ne répond à aucune commande ». Elles sont
+  // désormais aussi disponibles en privé/groupe pour l'administrateur.
+  b.onText(/^\/(?:start|stop|statut|planifier)\b/i, (msg) => {
+    const cmd = parsePredictionControlCommand(msg.text);
+    if (!cmd) return;
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    const reply = runPredictionControlCommand(cmd, 'administrateur');
+    if (reply) b.sendMessage(msg.chat.id, reply).catch(() => {});
+  });
+
+  // /meri — dans un canal suivi par « Type de mise » : meilleur type, explication
+  // et exemple du dernier suivi réussi (français puis russe).
+  b.onText(/^\/meri(?:@\w+)?\s*$/i, (msg) => {
+    const text = betType.meriReply(msg.chat);
+    if (!text) return;
+    (b.sendMessageUnguarded || b.sendMessage.bind(b))(msg.chat.id, text).catch(() => {});
+  });
+
+  // /site (ou /lien) — réservé aux administrateurs du site : envoie automatiquement le lien du site.
+  // Envoi NON filtré (sendMessageUnguarded) : le garde-fou anti-doublon des envois ignorerait un message identique déjà envoyé dans ce chat.
+  b.onText(/^\/(?:site|lien)(?:@\w+)?\s*$/i, (msg) => {
+    const say = (t) => (b.sendMessageUnguarded || b.sendMessage.bind(b))(msg.chat.id, t, { disable_web_page_preview: false }).catch((e) => console.error('/site : envoi impossible —', e.message));
+    const fromId = msg.from && msg.from.id;
+    console.log(`/site demandé par ${fromId} (admin configuré : ${state.adminId || 'aucun'})`);
+    if (!isAdmin(msg)) {
+      return say(`⛔ Commande réservée à l'administrateur du site.\nTon ID Telegram : ${fromId}\nAdministrateur configuré : ${state.adminId || 'aucun (à renseigner dans Réglages → Bot Telegram)'}`);
+    }
+    const url = String(analyseManque.siteUrl() || '').trim();
+    if (!url) return say('⚠️ Adresse du site inconnue : renseigne PUBLIC_URL sur le serveur, ou ouvre une fois le site dans ton navigateur, puis renvoie /site.');
+    say(`🌐 Lien du site\n━━━━━━━━━━━━━━━\n👉 ${url}`);
+  });
+
+  b.onText(/^\/(aide|help)/, (msg) =>
+    b.sendMessage(msg.chat.id, HELP, { parse_mode: 'Markdown' })
+  );
+
+  // ---------------------------------------------------------------------
+  // Export / import complet de la configuration (tokens, canaux, format,
+  // configuration de chaque stratégie, stratégies créées par l'IA,
+  // historique des analyses IA) en un classeur Excel — réservé à
+  // l'administrateur : le fichier contient les tokens API en clair.
+  // ---------------------------------------------------------------------
+  b.onText(/^\/exporter\b/, async (msg) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    try {
+      const buffer = await dataTransfer.exportBuffer();
+      const filename = `baccara-config-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      await b.sendDocument(
+        msg.chat.id,
+        buffer,
+        { caption: '📦 Export complet de la configuration (tokens, clés API, canaux, stratégies, stratégies IA et leur code, analyses IA, annonces, tous les panneaux : Répétition costume, Rupture, Chevauchement, Après perte, Combinée, Copie et annonce, Jeu 21, etc.).' },
+        { filename, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
+      );
+    } catch (e) {
+      await b.sendMessage(msg.chat.id, `❌ Export impossible : ${e.message}`);
+    }
+  });
+
+  b.onText(/^\/importer\b/, (msg) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    b.sendMessage(
+      msg.chat.id,
+      "📥 Envoie maintenant le fichier .xlsx à importer (ou envoie-le directement à tout moment, sans passer par /importer)."
+    );
+  });
+
+  // n'importe quel document .xlsx envoyé par l'administrateur déclenche
+  // l'import — pas besoin d'avoir tapé /importer juste avant.
+  b.on('message', async (msg) => {
+    if (!msg.document) return;
+    if (!isAdmin(msg)) return; // silencieux : un compte non-admin n'a même pas confirmation que la fonctionnalité existe
+    const name = String(msg.document.file_name || '');
+    if (!/\.xlsx$/i.test(name)) return; // ignore les autres pièces jointes
+    try {
+      const link = await b.getFileLink(msg.document.file_id);
+      const resp = await fetch(link);
+      if (!resp.ok) throw new Error(`Téléchargement du fichier impossible (HTTP ${resp.status}).`);
+      const buffer = Buffer.from(await resp.arrayBuffer());
+      const report = await dataTransfer.importBufferAsync(buffer);
+      await fillChannelTitles(b); // noms des canaux retrouvés dans les boutons (visibles dans « Envois »)
+      persist();
+      if (db.ready) await saveConfigsToDb();
+      const lines = ['✅ Import terminé.'];
+      if (report.applied.length) lines.push(`Appliqué : ${report.applied.join(', ')}`);
+      if (report.skipped.length) lines.push(`Feuilles absentes dans ce fichier (ignorées, réglages actuels conservés) : ${report.skipped.join(', ')}`);
+      lines.push("⚠️ Si le token du bot a changé, redémarre la connexion (Réglages → Bot Telegram → Enregistrer et redémarrer).");
+      await b.sendMessage(msg.chat.id, lines.join('\n'));
+    } catch (e) {
+      await b.sendMessage(msg.chat.id, `❌ Import impossible : ${e.message}`);
+    }
+  });
+
+  // /jeu SEUL = jeu en cours ; /jeu <n> est traité plus bas (fiche d'un jeu de la base)
+  b.onText(/^\/(?:live|encours)\b|^\/jeu(?:@\w+)?\s*$/, (msg) =>
+    b.sendMessage(msg.chat.id, liveText(), { parse_mode: 'Markdown' })
+  );
+
+  b.onText(/^\/reglages/, (msg) =>
+    b.sendMessage(msg.chat.id, settingsText(), { parse_mode: 'Markdown' })
+  );
+
+  // « Nul / 2-3 » : liste cliquable des trouvailles de l'analyse (ajouter / modifier / supprimer une règle),
+  // aussi envoyée toute seule dans le chat privé quand l'analyse trouve quelque chose (voir draw-two-three.js).
+  b.onText(/^\/nul\b/, async (msg) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    const view = drawTwoThree.listView();
+    (b.sendMessageUnguarded || b.sendMessage.bind(b))(msg.chat.id, view.text, { reply_markup: view.markup }).catch(() => {});
+  });
+  // « Victoire V1 / V2 » : liste cliquable des règles trouvées / appliquées par l'analyse (voir victoire-vb.js)
+  b.onText(/^\/victoire\b/, async (msg) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    const view = victoireVb.listView();
+    (b.sendMessageUnguarded || b.sendMessage.bind(b))(msg.chat.id, view.text, { reply_markup: view.markup }).catch(() => {});
+  });
+  b.on('callback_query', async (q) => {
+    try {
+      const data = String((q && q.data) || '');
+      const isVvb = data.startsWith('vvb:');
+      if (!data.startsWith('dtn:') && !isVvb) return;
+      if (!q.from || q.from.id !== Number(state.adminId)) { b.answerCallbackQuery(q.id, { text: 'Réservé à l\'administrateur' }).catch(() => {}); return; }
+      const r = isVvb ? victoireVb.handleCallback(data) : drawTwoThree.handleCallback(data);
+      await b.answerCallbackQuery(q.id, { text: r.answer || '' }).catch(() => {});
+      if (q.message && r.text) {
+        await b.editMessageText(r.text, { chat_id: q.message.chat.id, message_id: q.message.message_id, reply_markup: r.markup || { inline_keyboard: [] } }).catch(() => {});
+      }
+    } catch (_) { /* un bouton ne doit jamais faire tomber le bot */ }
+  });
+
+  // /envois [nom|id] : les « Envois » dans le chat privé — stratégies et configurations liées à un canal, avec modification / suppression (channel-admin.js)
+  b.onText(/^\/(?:envois|liens)(?:@\w+)?(?:\s+([\s\S]+))?\s*$/i, (msg, m) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    if (msg.chat && msg.chat.type && msg.chat.type !== 'private') return; // jamais dans un canal : la liste des configurations reste dans le chat privé
+    channelAdmin.open(b, msg.chat.id, (m && m[1]) || '').catch((e) => b.sendMessage(msg.chat.id, `❌ ${e.message}`).catch(() => {}));
+  });
+  b.on('callback_query', async (q) => {
+    try {
+      if (!String((q && q.data) || '').startsWith('cad:')) return;
+      if (!q.from || q.from.id !== Number(state.adminId)) { b.answerCallbackQuery(q.id, { text: 'Réservé à l\'administrateur' }).catch(() => {}); return; }
+      await channelAdmin.handleCallback(b, q);
+    } catch (_) { /* un bouton ne doit jamais faire tomber le bot */ }
+  });
+  b.on('message', (msg) => { // réponse texte attendue après « Renommer » / « Changer de canal »
+    if (!msg || !msg.text || msg.text.startsWith('/') || !isAdmin(msg) || (msg.chat && msg.chat.type && msg.chat.type !== 'private')) return;
+    channelAdmin.handleText(b, msg).catch(() => {});
+  });
+
+  b.onText(/^\/canaux/, (msg) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    b.sendMessage(msg.chat.id, `📋 *Canaux*\n${listChannels()}`, { parse_mode: 'Markdown' });
+  });
+
+  b.onText(/^\/setb(?:\s+(\d+))?/, (msg, m) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    if (!m[1]) return b.sendMessage(msg.chat.id, `ℹ️ Usage : /setb <n>  (actuel : ${state.B})`);
+    state.B = Math.max(1, parseInt(m[1], 10));
+    for (const s of SUITS) if (state.counters[s] > state.B) state.counters[s] = 0;
+    persist();
+    b.sendMessage(
+      msg.chat.id,
+      `✅ B = ${state.B}\nLe compteur monte de 1 à ${state.B} quand le costume apparaît dans la main du joueur, retombe à 0 quand il manque, et repart à 1 après avoir atteint ${state.B}.`
+    );
+  });
+
+  b.onText(/^\/setmaxr(?:\s+(\d+))?/, (msg, m) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    if (!m[1]) return b.sendMessage(msg.chat.id, `ℹ️ Usage : /setmaxr <n>  (actuel : ${state.maxR})`);
+    state.maxR = Math.max(0, Math.min(9, parseInt(m[1], 10)));
+    persist();
+    b.sendMessage(msg.chat.id, `✅ Rattrapages = ${state.maxR} : on vérifie le numéro prédit puis ${state.maxR} tour(s) suivant(s).`);
+  });
+
+  b.onText(/^\/setformat(?:\s+(\d+))?/, (msg, m) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    const list = fmt.formatList(1, 26);
+    if (!m[1])
+      return b.sendMessage(
+        msg.chat.id,
+        `ℹ️ Usage : /setformat <1-${fmt.FORMAT_COUNT}>  (actuel : ${state.format})\n\n${list.text}\n\n➡️ /formats 2 pour la suite`
+      );
+    state.format = fmt.clampFormat(m[1]);
+    state.template = null;
+    persist();
+    b.sendMessage(
+      msg.chat.id,
+      `✅ Format des prédictions = ${state.format}/${fmt.FORMAT_COUNT}\n\n` +
+        `⌛ Prédiction :\n${fmt.formatPreview(state.format, { maxR: state.maxR })}\n\n` +
+        `✅ Gagné :\n${fmt.formatPreview(state.format, { maxR: state.maxR, status: 'gagné', rattrapage: 1 })}\n\n` +
+        `❌ Perdu :\n${fmt.formatPreview(state.format, { maxR: state.maxR, status: 'perdu', rattrapage: state.maxR })}`
+    );
+  });
+
+  b.onText(/^\/formats(?:\s+(\d+))?/, (msg, m) => {
+    const list = fmt.formatList(m[1] || 1, 26);
+    b.sendMessage(
+      msg.chat.id,
+      `🎨 Styles de prédiction (${list.page}/${list.pages}) — ${fmt.FORMAT_COUNT} au total\n\n${list.text}\n\n` +
+        `➡️ /formats <page> • /apercu <n> • /setformat <n>`
+    );
+  });
+
+  b.onText(/^\/apercu(?:\s+(\d+))?/, (msg, m) => {
+    if (!m[1]) return b.sendMessage(msg.chat.id, `ℹ️ Usage : /apercu <1-${fmt.FORMAT_COUNT}>`);
+    const id = fmt.clampFormat(m[1]);
+    b.sendMessage(
+      msg.chat.id,
+      `🎨 Style ${id}/${fmt.FORMAT_COUNT}\n\n⌛\n${fmt.formatPreview(id, { maxR: state.maxR })}\n\n` +
+        `✅\n${fmt.formatPreview(id, { maxR: state.maxR, status: 'gagné', rattrapage: 1 })}\n\n` +
+        `❌\n${fmt.formatPreview(id, { maxR: state.maxR, status: 'perdu', rattrapage: state.maxR })}`
+    );
+  });
+
+  b.onText(/^\/settemplate(?:\s+([\s\S]+))?/, (msg, m) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    if (!m[1])
+      return b.sendMessage(
+        msg.chat.id,
+        'ℹ️ Usage : /settemplate 🎯 #{game} | {emoji} {suit} | {status}\n' +
+          'Variables : {game} {emoji} {suit} {status} {maxR} {rattrapage} {strategy}'
+      );
+    state.template = m[1].trim();
+    persist();
+    b.sendMessage(msg.chat.id, `✅ Template personnalisé actif :\n\n${fmt.renderMessage(state.format, { gameNumber: 1234, suit: '♦️', maxR: state.maxR }, state.template, { noAnimate: true }).text}`);
+  });
+
+  b.onText(/^\/notemplate/, (msg) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    state.template = null;
+    persist();
+    b.sendMessage(msg.chat.id, `✅ Retour au style numéroté ${state.format}/${fmt.FORMAT_COUNT}.`);
+  });
+
+  b.onText(/^\/sethand(?:\s+(\w+))?/, (msg) =>
+    b.sendMessage(
+      msg.chat.id,
+      'ℹ️ Ce bot analyse *uniquement la main du joueur*. La main du banquier est seulement enregistrée en base de données.',
+      { parse_mode: 'Markdown' }
+    )
+  );
+
+  b.onText(/^\/setdb(?:\s+(\S+))?/, async (msg, m) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    if (!m[1]) return b.sendMessage(msg.chat.id, 'ℹ️ La base Supabase est intégrée au code : /setdb ne change plus de base.');
+    const s = await db.connect();
+    b.sendMessage(msg.chat.id, s.ready ? '✅ Base de données connectée, tables créées.' : `❌ Échec : ${s.error}`);
+  });
+
+  // v147 : copie des configurations principale → secours (option « jeux » : + les 50 derniers jeux)
+  b.onText(/^\/copierconfig(?:\s+(\S+))?/, async (msg, m) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    const r = await db.copyConfig({ games: /^jeux$/i.test(m[1] || '') });
+    if (!r.ok) return b.sendMessage(msg.chat.id, `❌ Copie impossible : ${r.error}`);
+    const lignes = Object.entries(r.copied).map(([t, n]) => `• ${t} : ${n}`).join('\n');
+    b.sendMessage(msg.chat.id, `✅ Configurations copiées de la base ${r.from} vers la base ${r.to} :\n${lignes}`);
+  });
+
+  // v147 : permutation — la base de secours devient la principale, l'ancienne principale devient le secours
+  b.onText(/^\/permuterbases(?:\s+(\S+))?(?:\s+(\S+))?/, async (msg, m) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    const args = [m[1], m[2]].filter(Boolean).map((x) => x.toLowerCase());
+    if (!args.includes('confirmer')) {
+      const s = db.status();
+      const lignes = s.bases.map((x) => `• ${x.nom} : ${x.etat}${x.erreur ? ' (' + String(x.erreur).slice(0, 80) + ')' : ''}`).join('\n');
+      return b.sendMessage(msg.chat.id,
+        `🔁 Permutation des bases\n${lignes}\n\nLes configurations de la principale sont d'abord copiées dans le secours, puis les rôles s'inversent.\n` +
+        `Pour lancer : /permuterbases confirmer  (ajoute « jeux » pour copier aussi les 50 derniers jeux)`);
+    }
+    const r = await db.swapPrimary({ games: args.includes('jeux') });
+    if (!r.ok) return b.sendMessage(msg.chat.id, `❌ Permutation annulée (étape ${r.step || 'copie'}) : ${r.error}\nRien n'a changé.`);
+    const lignes = Object.entries(r.copied).map(([t, n]) => `• ${t} : ${n}`).join('\n');
+    b.sendMessage(msg.chat.id, `✅ Permutation faite : la base « ${r.nouvellePrincipale} » est maintenant la PRINCIPALE, l'autre est le SECOURS.\nConfigurations copiées :\n${lignes}`);
+  });
+
+  b.onText(/^\/db\b/, (msg) => {
+    const s = db.status();
+    b.sendMessage(msg.chat.id, `🗄️ Base : ${s.ready ? '🟢 connectée' : '🔴 non connectée'}\n${s.url || 'aucun lien'}\n${s.error ? '⚠️ ' + s.error : ''}`);
+  });
+
+  b.onText(/^\/jeux(?:\s+(\S+))?/, async (msg, m) => {
+    if (!db.ready) return b.sendMessage(msg.chat.id, '🔴 Aucune base de données connectée (/setdb).');
+    const sum = await db.dailySummary(m[1]);
+    if (!sum) return b.sendMessage(msg.chat.id, '⚠️ Date invalide. Exemple : /jeux 2/04/2026');
+    b.sendMessage(
+      msg.chat.id,
+      `📅 *${sum.date}*\nJeux : ${sum.total}\n🧍 Joueur : ${sum.joueur} | 🏦 Banquier : ${sum.banquier} | 🤝 Égalité : ${sum.egalite}\n` +
+        `Joueur pair ${sum.joueur_pair} / impair ${sum.joueur_impair}\nBanquier pair ${sum.banquier_pair} / impair ${sum.banquier_impair}`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  b.onText(/^\/base\b/, async (msg) => {
+    if (!db.ready) return b.sendMessage(msg.chat.id, '🔴 Aucune base de données connectée (/setdb).');
+    const o = await db.overview();
+    if (!o) return b.sendMessage(msg.chat.id, '⚠️ Lecture impossible.');
+    b.sendMessage(
+      msg.chat.id,
+      `🗄️ *Contenu de la base*\n` +
+        `• Jeux : ${o.games}\n• Prédictions : ${o.predictions}\n• Réglages : ${o.settings}\n` +
+        `• Dernier jeu : ${o.dernier_jeu ? '#N' + o.dernier_jeu : '—'}\n` +
+        `• Période : ${fmtDate(o.depuis)} → ${fmtDate(o.jusqua)}`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  b.onText(/^\/dates\b/, async (msg) => {
+    if (!db.ready) return b.sendMessage(msg.chat.id, '🔴 Aucune base de données connectée (/setdb).');
+    const rows = await db.availableDates(15);
+    if (!rows.length) return b.sendMessage(msg.chat.id, 'Aucune donnée enregistrée pour le moment.');
+    b.sendMessage(msg.chat.id, `📅 Dates disponibles\n${rows.map((r) => `• ${fmtDate(r.played_on)} — ${r.total} jeux`).join('\n')}`);
+  });
+
+  b.onText(/^\/derniers(?:\s+(\d+))?/, async (msg, m) => {
+    if (!db.ready) return b.sendMessage(msg.chat.id, '🔴 Aucune base de données connectée (/setdb).');
+    const rows = await db.lastGames(Math.max(1, Math.min(30, parseInt(m[1], 10) || 10)));
+    if (!rows.length) return b.sendMessage(msg.chat.id, 'Aucun jeu enregistré.');
+    b.sendMessage(
+      msg.chat.id,
+      `🧾 Derniers jeux (main joueur)\n` +
+        rows
+          .map((r) => `#N${r.number} • ${(r.player_cards || []).join(' ') || '—'} = ${r.player_value ?? '—'} (${r.player_parity || '—'}) • ${r.winner || 'en cours'}`)
+          .join('\n')
+    );
+  });
+
+  b.onText(/^\/jeu\s+(\d+)/, async (msg, m) => {
+    if (!db.ready) return b.sendMessage(msg.chat.id, '🔴 Aucune base de données connectée (/setdb).');
+    const g = await db.gameByNumber(m[1]);
+    if (!g) return b.sendMessage(msg.chat.id, `⚠️ Jeu #N${m[1]} introuvable en base.`);
+    b.sendMessage(
+      msg.chat.id,
+      `🧾 *Jeu #N${g.number}* — ${fmtDate(g.played_on)}\n` +
+        `🃏 Joueur : ${(g.player_cards || []).join(' ') || '—'} = *${g.player_value ?? '—'}* (${g.player_parity || '—'}, ${g.player_count ?? '—'} cartes)\n` +
+        `🎯 Costumes joueur : ${(g.player_suits || []).join(' ') || '—'}\n` +
+        `🏦 Banquier (archive) : ${(g.banker_cards || []).join(' ') || '—'} = ${g.banker_value ?? '—'}\n` +
+        `🏁 Résultat : ${g.winner || '—'} • phase ${g.phase || '—'}`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  b.onText(/^\/pred(?:ictions)?\b(?:\s+(\S+))?$/, async (msg, m) => {
+    if (!db.ready) return b.sendMessage(msg.chat.id, '🔴 Aucune base de données connectée (/setdb).');
+    const sum = await db.predictionSummary(m[1]);
+    if (!sum) return b.sendMessage(msg.chat.id, '⚠️ Date invalide. Exemple : /pred 2/04/2026');
+    const rows = await db.predictionsByDate(m[1], 15);
+    const lines = rows.map((r) => {
+      const ico = r.status === 'gagne' ? `✅ ${r.rattrapage ?? 0}` : r.status === 'perdu' ? '❌' : '⌛';
+      return `#N${r.target} ${r.suit} +${r.max_r} → ${ico}`;
+    });
+    b.sendMessage(
+      msg.chat.id,
+      `🎯 *Prédictions ${fmtDate(sum.date)}*\nTotal ${sum.total} • ✅ ${sum.gagne} • ❌ ${sum.perdu} • ⌛ ${sum.attente} • taux *${sum.taux}%*\n` +
+        `Rattrapage moyen : ${sum.r_moyen}\n\n${lines.join('\n') || '_aucune ligne_'}`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  b.onText(/^\/sql\s+([\s\S]+)/, async (msg, m) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    if (!db.ready) return b.sendMessage(msg.chat.id, '🔴 Aucune base de données connectée (/setdb).');
+    const r = await db.readOnlyQuery(m[1], 20);
+    if (r.error) return b.sendMessage(msg.chat.id, `❌ ${r.error}`);
+    if (!r.rows.length) return b.sendMessage(msg.chat.id, '✅ Requête exécutée : 0 ligne.');
+    const txt = r.rows.map((row) => JSON.stringify(row)).join('\n').slice(0, 3500);
+    b.sendMessage(msg.chat.id, `✅ ${r.rows.length} ligne(s)\n\n${txt}`);
+  });
+
+  b.onText(/^\/activer\s+(-?\d+)/, async (msg, m) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    const id = parseInt(m[1], 10);
+    activate(id);
+    b.sendMessage(msg.chat.id, `✅ Prédictions activées pour \`${id}\``, { parse_mode: 'Markdown' });
+    try {
+      await b.sendMessage(id, '🟢 *Prédictions actives*', { parse_mode: 'Markdown' });
+    } catch (e) {
+      b.sendMessage(msg.chat.id, `⚠️ Impossible d'écrire dans ce canal : ${e.message}`);
+    }
+  });
+
+  b.onText(/^\/desactiver\s+(-?\d+)/, (msg, m) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    deactivate(parseInt(m[1], 10));
+    b.sendMessage(msg.chat.id, `🔴 Prédictions désactivées pour \`${m[1]}\``, { parse_mode: 'Markdown' });
+  });
+
+
+  // ---- stratégies ---------------------------------------------------------
+  b.onText(/^\/strategies\b/, (msg) => {
+    const lines = strategies.LIST.map((d) => {
+      const c = state.strategies[d.key] || {};
+      const st = stats(d.key);
+      return `${c.enabled ? '🟢' : '🔴'} *${d.name}* — \`${d.key}\`\n` +
+        `   format ${c.format}${d.key === 'matchnul' ? '/' + (c.formatDistribution || 79) : ''} • +${c.maxR} rattrapage(s)` +
+        `${d.usesB ? ' • B=' + c.b : ''}` +
+        `${d.key === 'parite' ? ` • départ ${c.startGame} • VAR ${c.varStep} • décalage ${c.decalage}` : ''}` +
+        `${d.key === 'absente' ? ` • ${c.streak || 3} jeux consécutifs` : ''}` +
+        ` • ${st.win}✅/${st.loss}❌ (${st.rate}%)`;
+    });
+    b.sendMessage(msg.chat.id, `🧠 *Stratégies*\n\n${lines.join('\n\n')}\n\n➡️ /strategie <clé>`, { parse_mode: 'Markdown' });
+  });
+
+  b.onText(/^\/strategie(?!s)(?:\s+(\w+))?/, (msg, m) => {
+    const key = (m[1] || '').toLowerCase();
+    const d = strategies.BY_KEY[key];
+    if (!d) return b.sendMessage(msg.chat.id, `ℹ️ Usage : /strategie <${strategies.LIST.map((x) => x.key).join('|')}>`);
+    const c = state.strategies[key] || {};
+    const st = stats(key);
+    b.sendMessage(
+      msg.chat.id,
+      `🧠 *${d.name}* (\`${d.key}\`)\n\n${d.about}\n\n` +
+        `• État : ${c.enabled ? '🟢 active' : '🔴 arrêtée'}\n` +
+        `• Format : ${c.format}/${fmt.FORMAT_COUNT}${key === 'matchnul' ? ` (distribution : ${c.formatDistribution || 79})` : ''}\n` +
+        `• Rattrapages : +${c.maxR}\n` +
+        (d.usesB ? `• Compteur B : ${c.b}\n` : '') +
+        `• Prédiction lancée : +${c.lead} tour(s)\n` +
+        (key === 'parite'
+          ? `• Jeu de départ : ${c.startGame} • VAR : ${c.varStep} • Décalage : ${c.decalage}\n` +
+            `• Séquence : ${strategies.triggerSequence(c.startGame, c.varStep, 8).join(' → ')} …\n`
+          : '') +
+        (key === 'absente' ? `• Jeux consécutifs sans la carte : ${c.streak || 3}\n` : '') +
+        `• Canaux : ${(c.channels && c.channels.length ? c.channels.join(', ') : 'canaux actifs globaux')}\n` +
+        `• Résultats : ${st.win}✅ / ${st.loss}❌ / ${st.pending}⌛ → ${st.rate}%\n\n` +
+        `Aperçu :\n${fmt.formatPreview(c.format, { maxR: c.maxR })}`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  b.onText(/^\/activerstrat(?:\s+(\w+))?/, (msg, m) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    const key = (m[1] || '').toLowerCase();
+    if (!strategies.BY_KEY[key]) return b.sendMessage(msg.chat.id, 'ℹ️ Usage : /activerstrat <clé>');
+    setStrategyConfig(key, { enabled: true });
+    persist();
+    b.sendMessage(msg.chat.id, `🟢 Stratégie *${strategies.BY_KEY[key].name}* activée.`, { parse_mode: 'Markdown' });
+  });
+
+  b.onText(/^\/desactiverstrat(?:\s+(\w+))?/, (msg, m) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    const key = (m[1] || '').toLowerCase();
+    if (!strategies.BY_KEY[key]) return b.sendMessage(msg.chat.id, 'ℹ️ Usage : /desactiverstrat <clé>');
+    setStrategyConfig(key, { enabled: false });
+    persist();
+    b.sendMessage(msg.chat.id, `🔴 Stratégie *${strategies.BY_KEY[key].name}* arrêtée.`, { parse_mode: 'Markdown' });
+  });
+
+  b.onText(/^\/setstrat(?:\s+(\w+)\s+(\w+)\s+([\s\S]+))?/, (msg, m) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    if (!m[1]) return b.sendMessage(msg.chat.id, 'ℹ️ Usage : /setstrat <clé> <format|formatdistribution|maxr|b|lead|template> <valeur>');
+    const key = m[1].toLowerCase();
+    if (!strategies.BY_KEY[key]) return b.sendMessage(msg.chat.id, `⚠️ Stratégie inconnue : ${key}`);
+    const field = m[2].toLowerCase();
+    const value = m[3].trim();
+    const map = {
+      format: 'format', formatdistribution: 'formatDistribution', maxr: 'maxR', b: 'b', lead: 'lead', template: 'template',
+      depart: 'startGame', start: 'startGame', jeudepart: 'startGame',
+      var: 'varStep', decalage: 'decalage', rattrapage: 'maxR',
+      streak: 'streak', jeux: 'streak', consecutifs: 'streak',
+      absence: 'absence', ombre: 'absence', scope: 'scope', main: 'scope',
+      silence: 'silent', silencieux: 'silent', silent: 'silent',
+      fenetre: 'lossWindow', intervalle: 'lossWindow', perte: 'lossWindow',
+      resetgain: 'resetOnWin',
+      retard: 'delayEnabled', retardement: 'delayEnabled', delai: 'delaySec', delay: 'delaySec',
+    };
+    if (!map[field]) return b.sendMessage(msg.chat.id, '⚠️ Champ inconnu (format, formatdistribution, maxr, b, lead, depart, var, decalage, streak, absence, scope, silence, fenetre, resetgain, retard, delai, template).');
+    const target = map[field];
+    if (target === 'silent')
+      return b.sendMessage(msg.chat.id, 'ℹ️ Le mode silencieux 1 est toujours actif pour « ombre » et n\'est pas désactivable ; il n\'existe pour aucune autre stratégie.');
+    if ((target === 'lossWindow' || target === 'resetOnWin') && key !== 'ombre')
+      return b.sendMessage(msg.chat.id, '⚠️ Le mode silencieux est réservé à la stratégie « ombre ».');
+    let parsed = value;
+    if (target === 'resetOnWin' || target === 'delayEnabled') parsed = /^(1|oui|on|true|actif)$/i.test(value);
+    const cfg = setStrategyConfig(key, { [target]: parsed });
+    persist();
+    b.sendMessage(msg.chat.id, `✅ ${strategies.BY_KEY[key].name} → ${field} = ${cfg[target]}\n\n${fmt.formatPreview(cfg.format, { maxR: cfg.maxR })}`);
+  });
+
+  b.onText(/^\/ombre\b/, (msg) => {
+    const r = shadowRuntime();
+    const lines = r.suits.map((x) => `${x.suit} absent depuis ${x.absence} jeu(x)${x.watched ? ' 👁️ surveillé' : ''}`);
+    b.sendMessage(
+      msg.chat.id,
+      `🕯️ *Prédiction dans l'ombre*\n` +
+        `• État : ${r.enabled ? '🟢 active' : '🔴 arrêtée'}\n` +
+        `• Absence minimum : *${r.absence}* jeux\n` +
+        `• Prédiction au retour : *+${r.lead}*\n` +
+        `• Périmètre : ${r.scope === 'joueur' ? 'main du joueur' : 'joueur + banquier'}\n` +
+        `• Dernier jeu terminé : ${r.lastGame ? '#N' + r.lastGame : '—'}\n\n` +
+        lines.join('\n') +
+        `\n\n📡 ${r.gate.label}` +
+        (r.prediction ? `\n🎯 En attente : ${r.prediction.label} sur #N${r.prediction.target}` : ''),
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  // comptage détaillé, en temps réel, du filtre silencieux de la stratégie « ombre » :
+  // à chaque appel, l'état est recalculé à la volée (aucun cache) à partir des
+  // pertes/gains réellement enregistrés, donc toujours à jour.
+  b.onText(/^\/ombrecompte\b/, (msg) => {
+    const g = gateView('ombre');
+    const phaseTitle = {
+      1: '1️⃣ Phase 1 — en attente de la première perte',
+      2: '2️⃣ Phase 2 — perte de référence posée, mesure de l\'écart',
+      3: g.armed ? '3️⃣ Phase 3 — envoi public autorisé' : '3️⃣ Phase 3 — décompte silencieux en cours',
+    }[g.phase] || `Phase ${g.phase}`;
+
+    const lines = [`🕯️ *Comptage en temps réel — Prédiction dans l'ombre*`, '',
+      '🔕 Priorité : le mode silencieux passe AVANT tout (pas de déblocage automatique).', '',
+      phaseTitle, ''];
+
+    if (g.phase === 1) {
+      lines.push('• Aucune perte de référence pour l\'instant.');
+      lines.push('• Dès qu\'une prédiction silencieuse perd, le comptage démarre (phase 2).');
+    } else if (g.phase === 2) {
+      lines.push(`• Perte de référence : #N${g.since ?? '—'}`);
+      lines.push(
+        g.lossInterval
+          ? `• Écart mesuré depuis cette perte : ${g.used} (confirmation si écart ≤ ${g.lossInterval})`
+          : `• Écart mesuré depuis cette perte : ${g.used}/${g.lossWindow} (fenêtre max)`
+      );
+      lines.push(`• Pertes confirmées : ${g.losses}/${g.lossTrigger} nécessaire(s)`);
+      lines.push('• Une nouvelle perte dans la fenêtre confirme ; un gain ou un écart trop grand relance la référence.');
+    } else if (g.counting) {
+      lines.push(`• Position à atteindre avant l'envoi public : N = ${g.position}`);
+      lines.push(`• Prédictions comptées en silence : ${g.seen}/${g.position}`);
+      lines.push('• La mesure de référence continue en parallèle (phase 2) : une nouvelle perte dans l\'intervalle ajoute une AUTRE position en file, sans jamais interrompre celle-ci.');
+    } else if (g.armed) {
+      lines.push('• Le seuil est atteint : la *prochaine prédiction* part publiquement dans le canal.');
+      if (g.sendOnlyNext) lines.push('• Une seule prédiction sera envoyée, puis retour immédiat au silence.');
+      if (g.resetOnWin !== false) lines.push('• Un gain public après l\'envoi remet le comptage à zéro.');
+    }
+
+    if (g.queueLength > 1) {
+      lines.push('');
+      lines.push(`📋 File d'attente (${g.queueLength} position(s), envoyées dans cet ordre) :`);
+      g.queue.forEach((q, i) => {
+        lines.push(`   ${i + 1}. N=${q.position} — ${q.ready ? 'prête (en attente de tour d\'envoi)' : `${q.seen}/${q.position} compté(s)`}`);
+      });
+    }
+
+    lines.push('');
+    lines.push(
+      `⚙️ Réglages : ${g.lossTrigger} perte(s) requise(s) · intervalle max ${g.lossInterval || 'illimité'} · fenêtre ${g.lossWindow}`
+    );
+    lines.push('');
+    lines.push(`📤 Prochaine prédiction : ${g.sending ? 'CANAL CONFIGURÉ' : 'aucun envoi (silence)'}`);
+    lines.push(`📡 ${g.label}`);
+
+    // --- explication concrète : pourquoi il n'y a (ou pas) de prédiction --
+    // le filtre « double perte » et la détection « costume absent → retour »
+    // sont deux mécanismes séparés. Le filtre peut être ARMÉ sans qu'aucune
+    // prédiction existe encore (aucun costume n'est revenu), et inversement
+    // une prédiction peut exister mais rester bloquée par le filtre.
+    const r = shadowRuntime();
+    lines.push('');
+    lines.push('🔍 *Pourquoi (pas) de prédiction en ce moment :*');
+    if (!r.enabled) {
+      lines.push('• La stratégie ombre est actuellement 🔴 arrêtée (/activerstrat ombre pour la relancer).');
+    } else if (r.prediction) {
+      lines.push(
+        `• Une prédiction est déjà calculée : ${r.prediction.label || r.prediction.suit} sur #N${r.prediction.target}.`
+      );
+      lines.push(
+        g.sending
+          ? '• Le filtre est ouvert : elle partira (ou est déjà partie) dans le canal public.'
+          : '• Le filtre « double perte » n\'est pas encore ouvert : elle reste calculée en silence, invisible sur le canal public (visible sur le site).'
+      );
+    } else {
+      const watched = r.suits.filter((x) => x.watched);
+      if (!watched.length) {
+        const closest = [...r.suits].sort((a, b) => b.absence - a.absence)[0];
+        lines.push(
+          `• Aucun costume n'est encore assez absent (seuil = ${r.absence} jeux) pour être mis sous surveillance.`
+        );
+        if (closest) {
+          lines.push(`• Le plus proche : ${closest.suit} — absent depuis ${closest.absence}/${r.absence} jeu(x).`);
+        }
+      } else {
+        lines.push(`• Sous surveillance (absent ≥ ${r.absence} jeux), en attente de RETOUR :`);
+        for (const w of watched) lines.push(`   ${w.suit} — absent depuis ${w.absence} jeu(x)`);
+        lines.push(`• Dès le retour d'un de ces costumes, la prédiction sera calculée sur le jeu + ${r.lead}.`);
+      }
+    }
+
+    b.sendMessage(msg.chat.id, lines.join('\n'), { parse_mode: 'Markdown' });
+  });
+
+  // historique des prédictions de la stratégie ombre depuis la perte de
+  // référence actuelle (g.since) — avec alerte si leur nombre dépasse la
+  // limite configurée (intervalle max, ou fenêtre si aucun intervalle réglé).
+  b.onText(/^\/ombrehistorique\b/, (msg) => {
+    const g = gateView('ombre');
+
+    if (g.since == null) {
+      return b.sendMessage(
+        msg.chat.id,
+        `📜 *Historique — Prédiction dans l'ombre*\n\n` +
+          `Aucune perte de référence pour l'instant.\n📡 ${g.label}`,
+        { parse_mode: 'Markdown' }
+      );
+    }
+
+    const list = state.predictions
+      .filter((p) => p.strategy === 'ombre' && p.target >= g.since)
+      .sort((a, b2) => a.target - b2.target);
+
+    const badgeFor = (p) =>
+      p.status === 'gagné' ? '✅' : p.status === 'perdu' ? '❌' : '⌛';
+
+    const lines = [`📜 *Historique — Prédiction dans l'ombre*`, '',
+      `• Perte de référence : #N${g.since}`, ''];
+
+    if (!list.length) {
+      lines.push('• (Aucune prédiction retrouvée pour ce numéro — historique probablement purgé.)');
+    } else {
+      list.forEach((p, i) => {
+        lines.push(
+          `${i === 0 ? '🔻' : '  •'} #N${p.target} ${badgeFor(p)} ${p.label || p.suit || ''}`.trimEnd()
+        );
+      });
+    }
+
+    const done = list.filter((p) => p.status !== 'en attente');
+    const usingInterval = !!g.lossInterval;
+    const limit = usingInterval ? g.lossInterval : g.lossWindow;
+    const limitLabel = usingInterval ? `intervalle max ${g.lossInterval}` : `fenêtre ${g.lossWindow}`;
+
+    lines.push('');
+    lines.push(`⚙️ Réglages : ${limitLabel} · ${g.lossTrigger} perte(s) requise(s)`);
+    lines.push(`📊 Prédictions terminées depuis la référence : ${done.length}/${limit}`);
+
+    if (done.length > limit) {
+      lines.push('');
+      lines.push(
+        `⚠️ Ce nombre dépasse la limite configurée (${limitLabel}). ` +
+          `Normalement, dès que l'écart dépasse cette limite, la perte suivante ` +
+          `devient automatiquement la NOUVELLE référence (repart à zéro) — un ` +
+          `dépassement visible ici signale que ça n'a pas (encore) été traité ` +
+          `ainsi. Vérifiez /ombrecompte pour l'état exact du filtre.`
+      );
+    }
+
+    lines.push('');
+    lines.push(`📡 ${g.label}`);
+
+    b.sendMessage(msg.chat.id, lines.join('\n'), { parse_mode: 'Markdown' });
+  });
+
+  // liste des annonces de position publiées (« la prochaine sera la Nᵉ à venir »),
+  // identifiées par le numéro de la perte confirmante + la position annoncée.
+  // Statuts : en attente (décompte en cours) / envoyée (avec le n° du jeu
+  // réellement envoyé au canal public). Une annonce interrompue par une
+  // nouvelle perte ne se réalise jamais et disparaît de cette liste.
+  b.onText(/^\/ombreannonces(?:\s+(\d+))?/, (msg, m) => {
+    const limit = m[1] ? Math.max(1, Math.min(100, parseInt(m[1], 10))) : 20;
+    const list = announcementsFor('ombre', limit);
+
+    if (!list.length) {
+      return b.sendMessage(
+        msg.chat.id,
+        `📋 *Annonces de position — Prédiction dans l'ombre*\n\nAucune annonce pour l'instant.`,
+        { parse_mode: 'Markdown' }
+      );
+    }
+
+    const lines = [`📋 *Annonces de position — Prédiction dans l'ombre*`, ''];
+    for (const a of list) {
+      const icon = a.status === 'envoyee' ? '✅' : '⌛';
+      let line = `${icon} Jeu perdu #N${a.refNumber} → position ${ordinalFr(a.position)}`;
+      line += a.status === 'envoyee' ? ` — envoyée sur #N${a.sentNumber}` : ' — en attente';
+      lines.push(line);
+    }
+
+    const pending = list.filter((a) => a.status === 'en_attente').length;
+    lines.push('');
+    lines.push(`📊 ${list.length} affichée(s) · ${pending} en attente`);
+
+    b.sendMessage(msg.chat.id, lines.join('\n'), { parse_mode: 'Markdown' });
+  });
+
+  b.onText(/^\/silence(?:\s+(\w+))?(?:\s+(\d+))?(?:\s+(\d+))?(?:\s+(\w+))?/, (msg, m) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    const key = (m[1] || '').toLowerCase();
+    if (!strategies.BY_KEY[key])
+      return b.sendMessage(msg.chat.id, 'ℹ️ Usage : /silence <clé> [nombre max de prédictions après une perte] [intervalle MAX (écart) avant confirmation] [unique:on|off]');
+    if (key !== 'ombre')
+      return b.sendMessage(msg.chat.id, '⚠️ Le mode silencieux est réservé à la stratégie « ombre » et y est toujours actif (non désactivable).');
+    const patch = {};
+    if (m[2]) patch.lossWindow = parseInt(m[2], 10);
+    if (m[3]) patch.lossInterval = parseInt(m[3], 10);
+    if (m[4]) patch.sendOnlyNext = /^(on|oui|1|actif|true|unique)$/i.test(m[4]);
+    const cfg = setStrategyConfig(key, patch);
+    persist();
+    b.sendMessage(
+      msg.chat.id,
+      `🔕 ${strategies.BY_KEY[key].name}\n` +
+        `• Mode silencieux : toujours activé (non désactivable pour cette stratégie)\n` +
+        `• Prédictions max après une perte : ${cfg.lossWindow}\n` +
+        `• Intervalle MAX (écart) avant confirmation : ${cfg.lossInterval || 0}\n` +
+        `• Envoi : ${cfg.sendOnlyNext ? 'une seule prédiction puis retour au silence' : 'continu jusqu’à un gain'}\n` +
+        `• Retour au silence après un gain : ${cfg.resetOnWin === false ? 'non' : 'oui'}\n\n` +
+        gateView(key).label
+    );
+  });
+
+  b.onText(/^\/debloquer(?:\s+(\w+))?/, (msg, m) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    const key = (m[1] || '').toLowerCase();
+    const keys = key === 'tout' || key === 'all' || !key
+      ? strategies.LIST.map((d) => d.key)
+      : strategies.BY_KEY[key] ? [key] : null;
+    if (!keys) return b.sendMessage(msg.chat.id, 'ℹ️ Usage : /debloquer <clé|tout>');
+    for (const k of keys) unlockGate(k, true);
+    b.sendMessage(msg.chat.id, `🔓 Débloqué : ${keys.map((k) => strategies.BY_KEY[k].name).join(', ')}`);
+  });
+
+  b.onText(/^\/filtres\b/, (msg) => {
+    const lines = strategies.LIST.map((d) => {
+      const g = gateView(d.key);
+      return `${g.sending ? '🟢' : '🔕'} *${d.name}* — ${g.label}`;
+    });
+    b.sendMessage(msg.chat.id, `📡 *Filtres d'envoi*\n\n${lines.join('\n')}`, { parse_mode: 'Markdown' });
+  });
+
+  b.onText(/^\/sauverconfig\b/, async (msg) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    const r = await saveConfigsToDb();
+    b.sendMessage(msg.chat.id, r.ok
+      ? `💾 Configurations enregistrées en base : ${r.saved.join(', ')}`
+      : `⚠️ ${r.error}`);
+  });
+
+  b.onText(/^\/configs\b/, async (msg) => {
+    if (!db.ready) return b.sendMessage(msg.chat.id, '⚠️ Base de données non connectée.');
+    const rows = await db.loadStrategies();
+    const keys = Object.keys(rows);
+    if (!keys.length) return b.sendMessage(msg.chat.id, 'ℹ️ Aucune configuration enregistrée en base pour le moment.');
+    const lines = keys.map((k) => {
+      const c = rows[k] || {};
+      const name = strategies.BY_KEY[k] ? strategies.BY_KEY[k].name : k;
+      return `• *${name}* — ${c.enabled ? 'active' : 'arrêtée'} • format ${c.format} • +${c.maxR} • ` +
+        `silence ${c.silent ? 'oui' : 'non'} (${c.lossWindow || 3}) • canal ${(c.channels || []).join(', ') || '—'}`;
+    });
+    b.sendMessage(msg.chat.id, `🗄️ *Configurations en base*\n\n${lines.join('\n')}`, { parse_mode: 'Markdown' });
+  });
+
+  b.onText(/^\/resetstrat(?:\s+(\w+))?/, async (msg, m) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    const key = (m[1] || '').toLowerCase();
+    if (key === 'all' || key === 'tout') {
+      const done = [];
+      for (const def of strategies.LIST) {
+        const cfg = resetStrategy(def.key);
+        if (!cfg) continue;
+        if (db.ready) await db.saveStrategy(def.key, def.name, cfg);
+        done.push(def.name);
+      }
+      persist();
+      return b.sendMessage(msg.chat.id, `♻️ *${done.length} stratégie(s)* remise(s) aux valeurs par défaut du code.`, { parse_mode: 'Markdown' });
+    }
+    const cfg = resetStrategy(key);
+    if (!cfg) return b.sendMessage(msg.chat.id, 'ℹ️ Usage : /resetstrat <clé> (ou /resetstrat all)');
+    // CORRECTIF : avant, seul persist() (fichier local, perdu au redéploiement
+    // Render sans disque persistant) était appelé — le reset ne survivait donc
+    // jamais à un redémarrage. On enregistre maintenant aussi en base, comme
+    // le fait déjà le bouton du panneau web.
+    if (db.ready) await db.saveStrategy(key, strategies.BY_KEY[key].name, cfg);
+    persist();
+    b.sendMessage(msg.chat.id, `♻️ Configuration de *${strategies.BY_KEY[key].name}* remise par défaut.`, { parse_mode: 'Markdown' });
+  });
+
+  b.onText(/^\/supprimerstrat(?:\s+(\w+))?/, async (msg, m) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    const key = (m[1] || '').toLowerCase();
+    if (!strategies.BY_KEY[key]) return b.sendMessage(msg.chat.id, 'ℹ️ Usage : /supprimerstrat <clé>');
+    if (db.ready) await db.deleteStrategy(key);
+    resetStrategy(key);
+    setStrategyConfig(key, { enabled: false });
+    persist();
+    b.sendMessage(msg.chat.id, `🗑️ Configuration de *${strategies.BY_KEY[key].name}* supprimée en base et stratégie arrêtée.`, { parse_mode: 'Markdown' });
+  });
+
+  // ---- stratégie Pair / Impair (VAR) --------------------------------------
+  b.onText(/^\/parite\b/, (msg) => {
+    const r = parityRuntime();
+    const c = state.strategies.parite || {};
+    b.sendMessage(
+      msg.chat.id,
+      `🟢🔴 *Pair / Impair (VAR)*\n\n` +
+        `• État : ${r.enabled ? '🟢 active' : '🔴 arrêtée'}\n` +
+        `• Jeu de départ : *${r.startGame}*\n` +
+        `• VAR configuré : *${r.varStep}* (VAR actuel : ${r.varLeft})\n` +
+        `• Décalage : *${r.decalage}*\n` +
+        `• Rattrapage : *+${r.maxR}*\n` +
+        `• Format : *${r.format}/${fmt.FORMAT_COUNT}*\n\n` +
+        `🎲 Jeu actuel : *${r.currentGame ? '#N' + r.currentGame : '—'}*\n` +
+        `⬅️ Dernier déclencheur : *${r.lastTrigger ? '#N' + r.lastTrigger : '—'}*\n` +
+        `➡️ Prochain déclencheur : *#N${r.nextTrigger}*\n` +
+        `🔮 Prédiction en cours : ${r.prediction ? `*${r.prediction.parity.toUpperCase()}* sur #N${r.prediction.target} (rattrapage ${r.prediction.step}/${r.prediction.maxR})` : '—'}\n\n` +
+        `📈 Séquence : ${r.sequence.join(' → ')} …\n\n` +
+        `➡️ /setparite <départ> <var> <décalage> <rattrapage>`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  b.onText(/^\/setparite(?:\s+(\d+)\s+(\d+)\s+(\d+)(?:\s+(\d+))?)?/, (msg, m) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    if (!m[1]) return b.sendMessage(msg.chat.id, 'ℹ️ Usage : /setparite <jeu de départ> <var> <décalage> [rattrapage]\nExemple : /setparite 1 2 1 3');
+    const cfg = setStrategyConfig('parite', {
+      startGame: m[1], varStep: m[2], decalage: m[3],
+      ...(m[4] ? { maxR: m[4] } : {}),
+    });
+    persist();
+    const r = parityRuntime();
+    b.sendMessage(
+      msg.chat.id,
+      `✅ Pair / Impair configurée\n` +
+        `Départ ${cfg.startGame} • VAR ${cfg.varStep} • Décalage ${cfg.decalage} • Rattrapage +${cfg.maxR}\n\n` +
+        `Séquence : ${r.sequence.join(' → ')} …\n` +
+        `Prochain déclencheur : #N${r.nextTrigger}`
+    );
+  });
+
+  // ---- stratégies créées par l'IA -----------------------------------------
+  function iaLine(s, i) {
+    const rate = Number.isFinite(s.rate) ? s.rate : null;
+    const min = Number.isFinite(s.rateMin) ? s.rateMin : rate;
+    const flag = rate != null && min != null && rate >= 90 && min >= 90 ? '🏆' : rate >= 90 ? '⭐' : '•';
+    return `${flag} *${i + 1}. ${s.name}*\n` +
+      `   Taux : ${rate == null ? '—' : rate + '%'} • plus bas : ${min == null ? '—' : min + '%'} • mesures : ${s.observations || 1}\n` +
+      (s.support ? `   Échantillon : ${s.support}\n` : '') +
+      (s.trigger ? `   Déclencheur : ${String(s.trigger).slice(0, 120)}\n` : '') +
+      (s.target ? `   Cible : ${String(s.target).slice(0, 120)}\n` : '') +
+      `   Origine : ${s.origin || 'ia'} • ${s.active ? '🟢 active' : '⚪ inactive'}`;
+  }
+
+  b.onText(/^\/(?:ia|strategiesia)(?:@\w+)?(?:\s+(\d+))?\s*$/, (msg, m) => {
+    const limit = Math.min(Math.max(parseInt(m[1], 10) || 15, 1), 40);
+    const list = aiAuto.listStrategies();
+    if (!list.length) {
+      return b.sendMessage(msg.chat.id, "🤖 Aucune stratégie créée par l'IA pour l'instant. L'analyseur tourne en continu, réessaie plus tard.");
+    }
+    const rows = list.slice(0, limit).map(iaLine);
+    b.sendMessage(
+      msg.chat.id,
+      `🤖 *Stratégies créées par l'IA* — ${list.length} au total\n\n${rows.join('\n\n')}\n\n🏆 = 90% et jamais descendue → /ia90`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  b.onText(/^\/(?:ia90|elite)(?:@\w+)?(?:\s+(\d+))?\s*$/, (msg, m) => {
+    const seuil = Math.min(Math.max(parseInt(m[1], 10) || 90, 50), 100);
+    const list = aiAuto.eliteStrategies(seuil);
+    if (!list.length) {
+      return b.sendMessage(msg.chat.id, `🤖 Aucune stratégie IA à ${seuil}% ou plus sans jamais descendre pour l'instant.`);
+    }
+    b.sendMessage(
+      msg.chat.id,
+      `🏆 *Stratégies IA à ${seuil}% sans descendre* — ${list.length}\n\n${list.map(iaLine).join('\n\n')}`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  b.onText(/^\/iabilan\b/, (msg) => {
+    b.sendMessage(msg.chat.id, predit.globalBilanText() + '\n\n' +
+      predit.strategiesView().filter((v) => v.bilan && v.bilan.total > 0)
+        .map((v) => `• ${v.name} : ${v.bilan.win}✅/${v.bilan.loss}❌ (${v.bilan.rate}%)`).join('\n'));
+  });
+
+  b.onText(/^\/bilan\b/, async (msg) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    const r = await flushBilans('commande /bilan');
+    b.sendMessage(msg.chat.id, `📊 Bilan publié : ${r.strategies.length} stratégie(s) + IA (${r.ai.ok ? 'envoyé' : r.ai.error || 'non envoyé'}).`);
+  });
+
+  // déclenchement manuel du rapport PDF de fin de sabot (déclencheurs ≥75%
+  // des 7 stratégies + conseil ciblé) — utile pour le tester sans attendre
+  // un vrai retour du jeu à #N1.
+  b.onText(/^\/rapportsabot\b/, async (msg) => {
+    if (!isAdmin(msg)) return deny(msg.chat.id);
+    b.sendMessage(msg.chat.id, '📄 Génération du rapport en cours…');
+    const ok = await sendShoeReport('commande /rapportsabot', state.shoeSeq || 0);
+    if (!ok) b.sendMessage(msg.chat.id, "❌ Échec de l'envoi (aucun token, aucun administrateur configuré, ou erreur — voir les logs).");
+  });
+
+  b.onText(/^\/stats\b/, (msg) => {
+    const s = stats();
+    b.sendMessage(
+      msg.chat.id,
+      `📊 Prédictions : ${s.total}\n✅ ${s.win} | ❌ ${s.loss} | 🎯 ${s.rate}%\n\n` +
+        strategies.LIST.map((d) => {
+          const x = stats(d.key);
+          return `${(state.strategies[d.key] || {}).enabled ? '🟢' : '🔴'} ${d.name} : ${x.win}✅/${x.loss}❌ (${x.rate}%)`;
+        }).join('\n') +
+        `\n\nTour live : ${state.live ? '#N' + state.live.number : '—'}`
+    );
+  });
+}
+
+function activate(id) {
+  if (!state.activeChannels.includes(id)) state.activeChannels.push(id);
+  if (!state.channels.some((c) => c.id === id)) state.channels.push({ id, title: String(id) });
+  persist();
+}
+
+function deactivate(id) {
+  state.activeChannels = state.activeChannels.filter((c) => c !== id);
+  persist();
+}
+
+// Un seul (re)démarrage à la fois : deux appels simultanés (démarrage + « Enregistrer et
+// redémarrer », ou import) créaient DEUX pollers sur le même token, d'où les réponses en double.
+let startChain = Promise.resolve();
+function startBot(token) {
+  const run = () => startBotInner(token);
+  const p = startChain.then(run, run);
+  startChain = p.catch(() => {});
+  return p;
+}
+
+// Anti-doublon : une même mise à jour Telegram (update_id) n'est traitée qu'une seule fois,
+// même si deux instances du bot la reçoivent.
+const seenUpdates = new Map();
+function isDuplicateUpdate(u) {
+  if (!u || u.update_id === undefined) return false;
+  const now = Date.now();
+  if (seenUpdates.has(u.update_id)) return true;
+  seenUpdates.set(u.update_id, now);
+  if (seenUpdates.size > 500) for (const [k, t] of seenUpdates) { if (now - t > 10 * 60 * 1000) seenUpdates.delete(k); }
+  return false;
+}
+
+async function startBotInner(token) {
+  if (token) state.botToken = token.trim();
+  persist();
+  state.botError = null;
+  if (bot) {
+    try { await bot.stopPolling({ cancel: true }); } catch (_) {}
+    try { bot.removeAllListeners(); } catch (_) {}
+    bot = null;
+  }
+  if (!state.botToken) {
+    state.botError = 'Aucun token configuré';
+    return { ok: false, error: state.botError };
+  }
+  try {
+    // CORRECTIF PRINCIPAL « aucune commande ne répond » : on démarre d'abord
+    // SANS polling, on supprime tout webhook resté actif sur ce token (sinon
+    // Telegram rejette chaque getUpdates avec 409 Conflict : les prédictions
+    // partent toujours, mais AUCUNE commande n'arrive jamais), puis seulement
+    // ensuite on lance la réception des mises à jour — en demandant
+    // explicitement les publications de canal (channel_post), nécessaires
+    // pour les commandes écrites dans le canal d'une stratégie.
+    bot = new TelegramBot(state.botToken, {
+      polling: {
+        autoStart: false, // démarré à la main, après deleteWebHook (voir plus bas)
+        params: {
+          timeout: 30,
+          // liste explicite : sans « channel_post », les commandes écrites
+          // dans le canal d'une stratégie n'arrivent jamais au bot.
+          allowed_updates: JSON.stringify([
+            'message', 'edited_message', 'channel_post', 'edited_channel_post',
+            'callback_query', 'my_chat_member', 'chat_member',
+          ]),
+        },
+      },
+    });
+    installChannelGuard(bot);
+    const rawProcessUpdate = bot.processUpdate.bind(bot);
+    bot.processUpdate = (u) => { if (isDuplicateUpdate(u)) return; return rawProcessUpdate(u); };
+    wire(bot);
+    const me = await bot.getMe(); // valide le token avant de lancer le polling
+    state.botUsername = me.username;
+    try { await bot.deleteWebHook({ drop_pending_updates: false }); }
+    catch (e) { console.error('Suppression du webhook impossible :', e.message); }
+    await bot.startPolling({ restart: true });
+    console.log('🤖 Bot principal @' + me.username + ' : réception des commandes active (privé, groupes et canaux).');
+    return { ok: true, username: me.username };
+  } catch (e) {
+    state.botError = e.message;
+    if (bot) { try { await bot.stopPolling({ cancel: true }); } catch (_) {} }
+    bot = null;
+    return { ok: false, error: e.message };
+  }
+}
+
+function botStatus() {
+  return {
+    running: !!bot,
+    username: state.botUsername || null,
+    tokenSet: !!state.botToken,
+    tokenMasked: state.botToken ? state.botToken.slice(0, 8) + '••••••' + state.botToken.slice(-4) : null,
+    adminId: state.adminId,
+    error: state.botError || null,
+  };
+}
+
+// Déconnexion volontaire : arrête le polling, efface le token en mémoire ET
+// en base (data.json + PostgreSQL via persist()), afin qu'aucun ancien token
+// ne reste actif ni ne revienne après un redémarrage. L'API Telegram cesse de
+// répondre pour ce bot jusqu'à ce qu'un nouveau token soit configuré.
+async function disconnectBot() {
+  if (bot) {
+    try { await bot.stopPolling({ cancel: true }); } catch (_) {}
+    bot = null;
+  }
+  state.botToken = '';
+  state.botUsername = null;
+  state.botError = null;
+  persist();
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Expéditeurs : chaque stratégie peut avoir SON propre token de bot
+// ---------------------------------------------------------------------------
+const senders = new Map(); // token -> instance TelegramBot (sans polling)
+
+// Renvoie TOUJOURS un expéditeur si un token est disponible : le bot principal
+// quand il tourne, sinon une instance d'envoi seul (sans polling). Ainsi les
+// prédictions partent même si le polling du bot principal est en erreur.
+function senderFor() {
+  const token = (state.botToken || '').trim();
+  if (!token) return null;
+  if (bot) return bot;                      // bot principal (polling actif)
+  if (!senders.has(token)) {
+    try { senders.set(token, installChannelGuard(new TelegramBot(token, { polling: false }))); }
+    catch (e) { console.error('Token Telegram invalide :', e.message); senders.set(token, null); }
+  }
+  return senders.get(token) || null;
+}
+
+// Résout un canal (ID numérique ou @nom) : titre, type, abonnés, droit de publier.
+async function resolveChat(chatId) {
+  const sender = senderFor();
+  if (!sender) return { ok: false, error: "Aucun token API configuré dans les réglages." };
+  try {
+    const chat = await sender.getChat(chatId);
+    let memberCount = null;
+    try { memberCount = await sender.getChatMemberCount(chat.id); } catch (_) {}
+    let canPost = null;
+    try {
+      const me = await sender.getMe();
+      const m = await sender.getChatMember(chat.id, me.id);
+      canPost = m.status === 'creator' || (m.status === 'administrator' && m.can_post_messages !== false);
+    } catch (_) {}
+    return {
+      ok: true,
+      chat: {
+        id: chat.id,
+        title: chat.title || chat.username || String(chat.id),
+        type: chat.type,
+        username: chat.username || null,
+        memberCount,
+        canPost,
+      },
+    };
+  } catch (e) {
+    const msg = /chat not found/i.test(e.message)
+      ? "Canal introuvable : ajoute d'abord le bot comme administrateur du canal, puis réessaie."
+      : e.message;
+    return { ok: false, error: msg };
+  }
+}
+
+// compteur de messages envoyés par stratégie
+function countSent(key, n = 1) {
+  const cfg = state.strategies[key];
+  if (!cfg) return;
+  cfg.sentCount = (cfg.sentCount || 0) + n;
+  cfg.lastSentAt = Date.now();
+}
+
+function dropSender(token) {
+  if (token && senders.has(token)) senders.delete(token);
+}
+
+// bilan à envoyer quand le jeu reprend
+const bilanPending = new Set();
+let lastLiveNumber = null;
+let lastShoeSeq = 0;
+// CORRECTIF : setInterval(tick, 1500ms) ne garantit pas qu'un tick se termine
+// avant que le suivant démarre. Si un tour (appel réseau, envoi Telegram) est
+// lent, deux exécutions de tick() pouvaient se chevaucher et repérer TOUTES
+// LES DEUX la même prédiction « ombre » encore non envoyée (state.predictions
+// pas encore mis à jour par la première) → double envoi dans le canal public.
+let ticking = false;
+// v123 : garde-fous de la boucle principale. Un envoi Telegram ou une requête qui ne répond jamais laissait `ticking` à vrai pour
+// toujours : plus aucun jeu lu, plus aucune vérification, les prédictions restaient « en attente » (surtout après 00h00).
+let tickStartedAt = 0;
+let tickSeq = 0;
+const TICK_MAX_MS = 120000;     // un passage plus long que ça est considéré comme bloqué : le suivant reprend la main
+const FETCH_MAX_MS = 60000;     // lecture complète de l'API (miroirs + découverte + proxys)
+const MODULES_MAX_MS = 45000;   // tous les panneaux de prédiction ensemble
+function raceTimeout(promise, ms, label) {
+  let t;
+  const timeout = new Promise((_, reject) => { t = setTimeout(() => reject(new Error(`${label} : délai de ${Math.round(ms / 1000)} s dépassé`)), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
+}
+
+async function sendBilan(key, snapshot) {
+  // Un bilan est un nouvel envoi. Il ne doit pas contourner l'interrupteur
+  // global si /stop arrive entre la détection de fin de sabot et son envoi.
+  if (predictionControl.isPaused()) return;
+  const cfg = state.strategies[key] || {};
+  if (cfg.bilan === false) return;
+  const sender = senderFor();
+  if (!sender) return;
+  // CORRECTIF « bilans cumulés » : snapshot figé fourni par flushBilans()
+  // (voir plus bas) — sans lui (appel manuel /bilan sur UNE stratégie via
+  // le panneau admin), on retombe sur l'état live, comportement inchangé.
+  const text = bilanText(key, snapshot);
+  for (const id of strategyChannels(key)) {
+    try { await sender.sendMessage(id, text); countSent(key); }
+    catch (e) { console.error('Bilan non envoyé', id, e.message); }
+  }
+}
+
+// Déclenche le bilan complet UNIQUEMENT quand le sabot qui vient de se
+// terminer représente une VRAIE journée (au moins config.BILAN_MIN_GAMES
+// jeux joués) — filtre les remises à zéro isolées/anormales en cours de
+// journée. Une seule fois par sabot (garde lastBilanShoeSeq, persistée).
+// CORRECTIF : ne fait plus qu'ENREGISTRER la demande — voir pendingBilan
+// ci-dessus et son traitement (await) dans tick().
+function sendBilanIfDayOver(reason, seq, previousMax) {
+  if (!previousMax || previousMax < config.BILAN_MIN_GAMES) return; // pas une vraie fin de journée
+  if (seq === lastBilanShoeSeq) return;                              // déjà envoyé pour ce sabot
+  pendingBilan = { reason, seq, previousMax };
+}
+
+// Publie le bilan COMPLET : chaque stratégie ayant prédit + les prédictions
+// IA, puis remet les compteurs à zéro sur le site. Appelée par
+// sendBilanIfDayOver() ci-dessus (fin de journée réelle) ou manuellement
+// (commande /bilan).
+async function flushBilans(reason = 'nouveau jour') {
+  bilanPending.clear();
+  // CORRECTIF « bilans cumulés » : instantané figé de state.predictions AU
+  // MOMENT où le bilan démarre. L'envoi Telegram (plusieurs canaux, un par
+  // stratégie) prend plusieurs secondes ; pendant ce temps, le jeu reprend
+  // déjà au numéro 1 et de NOUVELLES prédictions du jour suivant sont créées
+  // (et parfois même déjà résolues) par le tick() en cours. Sans cet
+  // instantané, bilanText(key) relisait l'état LIVE à chaque itération de la
+  // boucle ci-dessous et mélangeait les résultats du jour qui vient de
+  // commencer avec ceux du jour qui vient de se terminer — d'où le bilan
+  // qui « cumule » jour 1 et jour 2.
+  const snapshot = state.predictions.slice();
+  const keys = strategies.LIST
+    .map((d) => d.key)
+    .filter((key) => snapshot.some((p) => p.strategy === key));
+  const done = [];
+  for (const key of keys) {
+    try { await sendBilan(key, snapshot); done.push(key); }
+    catch (e) { console.error('Bilan non envoyé', key, e.message); }
+  }
+  // `predit.sendBilans()` est un autre chemin d'envoi Telegram. Si /stop a
+  // été reçu pendant le bilan d'une stratégie, il ne doit pas continuer à
+  // publier dans le panneau IA ni nettoyer prématurément la file du bilan.
+  if (predictionControl.isPaused()) return { strategies: done, ai: { ok: false, error: 'Prédictions arrêtées' } };
+  let ai = { ok: false, error: 'panneau Prédit indisponible' };
+  try { ai = await predit.sendBilans(); }
+  catch (e) { ai = { ok: false, error: e.message }; }
+  // CORRECTIF : un bilan par jour, puis le site repart à zéro. On ne retire
+  // que les prédictions déjà TERMINÉES (gagné/perdu/annulé) de la vue en
+  // cours — celles encore « en attente » restent affichées (en cours), et
+  // l'historique complet reste consultable en base de données (/pred, /jeux…).
+  // CORRECTIF « bilans cumulés » : on ne retire QUE les prédictions qui
+  // faisaient partie de l'instantané envoyé ci-dessus ET qui sont désormais
+  // résolues. Une prédiction créée APRÈS l'instantané (déjà le jour suivant)
+  // n'est jamais retirée ici, même si elle s'est résolue entre-temps — elle
+  // sera comptée dans SON PROPRE bilan, au prochain retour à 1.
+  const snapshotIds = new Set(snapshot.map((p) => p.id));
+  state.predictions = state.predictions.filter((p) => p.status === 'en attente' || !snapshotIds.has(p.id));
+  console.log(`📊 Bilan (${reason}) : ${done.join(', ') || 'aucune stratégie'} • IA : ${ai.ok ? 'envoyé' : ai.error}`);
+  return { strategies: done, ai };
+}
+
+// message de confirmation envoyé dans le canal dès qu'on configure
+// le token API et/ou l'ID du canal d'une stratégie
+async function announceConfig(key, mode = 'published') {
+  const def = strategies.BY_KEY[key];
+  const cfg = state.strategies[key] || {};
+  const ids = strategyChannels(key, mode);
+  if (!def) return { ok: false, error: 'Stratégie inconnue' };
+  if (!ids.length) return { ok: false, error: `Aucun canal ${mode === 'published' ? 'public' : 'silencieux'} configuré pour cette stratégie` };
+  const sender = senderFor();
+  if (!sender) return { ok: false, error: "Aucun token API configuré dans les réglages" };
+
+  const sent = [];
+  const failed = [];
+  const infos = [];
+  for (const id of ids) {
+    const r = await resolveChat(id);
+    const info = r.ok ? r.chat : { id, title: String(id), type: '?', memberCount: null, canPost: null };
+    if (!r.ok) info.error = r.error;
+    const text =
+      '✅ CANAL CONFIGURÉ\n\n' +
+      `🧠 Stratégie : ${def.name}\n` +
+      `📡 Canal : ${info.title}\n` +
+      `🆔 ID : ${info.id}\n` +
+      (info.memberCount != null ? `👥 Abonnés : ${info.memberCount}\n` : '') +
+      `🤖 Bot : @${state.botUsername || 'bot'} (token des réglages)\n` +
+      `🎯 Format ${cfg.format} • +${cfg.maxR} rattrapage(s)\n` +
+      `📊 Bilan automatique : ${cfg.bilan === false ? 'non' : 'oui'}\n` +
+      `🧭 Routage : ${mode === 'published' ? 'prédictions activées' : 'prédictions silencieuses'}\n\n` +
+      `Ce canal recevra désormais les ${mode === 'published' ? 'prédictions publiées' : 'prédictions silencieuses'} de cette stratégie. 🚀`;
+    try {
+      // l'envoi est tenté même si getChat a échoué : certains canaux ne
+      // répondent pas à getChat mais acceptent parfaitement les messages.
+      await sender.sendMessage(id, text);
+      sent.push(id);
+      countSent(key);
+      info.confirmed = true;
+      info.error = null;
+      state.sendErrors[key] = null;
+    } catch (e) {
+      failed.push({ id, error: e.message });
+      info.confirmed = false;
+      info.error = e.message;
+      state.sendErrors[key] = `${id} : ${e.message}`;
+    }
+    infos.push(info);
+  }
+  if (mode === 'shadow') cfg.shadowChannelInfos = infos;
+  else {
+    cfg.channelInfos = infos;
+    cfg.publishedChannelInfos = infos;
+  }
+  return {
+    ok: sent.length > 0,
+    sent,
+    failed,
+    channels: infos,
+    error: sent.length ? null : (failed[0] ? `${failed[0].id} : ${failed[0].error}` : 'Envoi impossible'),
+  };
+}
+
+// envoi d'un message de test dans le(s) canal(aux) d'une stratégie
+async function testSend(key, mode = 'published') {
+  const def = strategies.BY_KEY[key];
+  if (!def) return { ok: false, error: 'Stratégie inconnue' };
+  const sender = senderFor();
+  if (!sender) return { ok: false, error: "Aucun token API configuré dans les réglages" };
+  const ids = strategyChannels(key, mode);
+  if (!ids.length) return { ok: false, error: `Aucun canal ${mode === 'published' ? 'public' : 'silencieux'} configuré pour cette stratégie` };
+  const cfg = state.strategies[key] || {};
+  const preview = fmt.formatPreview(cfg.format, { maxR: cfg.maxR });
+  const text = `🧪 TEST D'ENVOI\n\n🧠 ${def.name}\n🧭 ${mode === 'published' ? 'Canal public' : 'Canal silencieux'}\n\n${preview}\n\nSi tu vois ce message, le routage est correctement configuré. ✅`;
+  const sent = [];
+  const failed = [];
+  for (const id of ids) {
+    try { await sender.sendMessage(id, text); sent.push(id); countSent(key); }
+    catch (e) { failed.push({ id, error: e.message }); }
+  }
+  state.sendErrors[key] = failed.length ? `${failed[0].id} : ${failed[0].error}` : null;
+  return { ok: sent.length > 0, sent, failed, text };
+}
+
+// confirmation pour le bot principal (réglages)
+// Configure le canal principal (page Configuration) : vérification + message
+async function setMainChannel(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return { ok: false, error: "Renseigne l'ID du canal (ex : -1001234567890 ou @moncanal)" };
+  if (!state.botToken) return { ok: false, error: "Configure d'abord le token API du bot." };
+  const check = await resolveChat(value);
+  const id = check.ok ? check.chat.id : (/^-?\d+$/.test(value) ? Number(value) : value);
+  if (!state.activeChannels.includes(id)) state.activeChannels.push(id);
+  if (!state.channels.some((c) => c.id === id)) {
+    state.channels.push({ id, title: check.ok ? check.chat.title : String(id) });
+  }
+  persist();
+  const sender = senderFor();
+  const text =
+    '✅ CANAL PRINCIPAL CONFIGURÉ\n\n' +
+    `🤖 Bot : @${state.botUsername || 'bot'}\n` +
+    `📡 Canal : ${check.ok ? check.chat.title : id}\n` +
+    `🆔 ID : ${id}\n\n` +
+    'Le token API et l’ID du canal sont enregistrés en base de données : ' +
+    'après un redémarrage tout repart automatiquement. 🚀';
+  try {
+    await sender.sendMessage(id, text);
+    return { ok: true, id, chat: check.ok ? check.chat : { id, title: String(id) }, sent: true };
+  } catch (e) {
+    return { ok: false, error: `Message non envoyé dans ${id} : ${e.message}`, id };
+  }
+}
+
+async function announceMainBot() {
+  const sender = senderFor();
+  if (!sender) return { ok: false, error: 'Aucun token API configuré' };
+  const ids = [...new Set([
+    ...(state.activeChannels || []),
+    ...strategies.LIST.flatMap((d) => strategyChannels(d.key)),
+  ])];
+  if (!ids.length) return { ok: false, error: "Token enregistré. Configure maintenant un ID de canal pour recevoir les messages." };
+  const text =
+    '✅ BOT CONNECTÉ\n\n' +
+    `🤖 @${state.botUsername || 'bot'}\n` +
+    `📡 Canal : ${ids.join(', ')}\n\n` +
+    'Le token API est enregistré : ce canal recevra les prédictions. 🚀';
+  const sent = [];
+  const failed = [];
+  for (const id of ids) {
+    try { await sender.sendMessage(id, text); sent.push(id); }
+    catch (e) { failed.push({ id, error: e.message }); }
+  }
+  return { ok: sent.length > 0, sent, failed, text };
+}
+
+// ---------------------------------------------------------------------------
+// Envoi + vérification des prédictions
+// ---------------------------------------------------------------------------
+async function broadcast(pred) {
+  // Le garde-fou de tick() protège le chemin normal, mais un tick peut déjà
+  // être en cours quand le message /stop arrive. Refaire le test ici empêche
+  // la file « ombre » ou une prédiction déjà calculée de partir après l'arrêt.
+  if (predictionControl.isPaused()) {
+    pred.silent = true;
+    pred.gate = '⏸️ Arrêt global — envoi ignoré';
+    return;
+  }
+  if (db.ready) db.savePrediction(pred, state.B);
+  const sender = senderFor();
+  if (!sender) {
+    state.sendErrors[pred.strategy] = 'Aucun token Telegram configuré';
+    return;
+  }
+  // ── Mode silencieux 1 (filtre pertes → publication publique) ─────────────
+  // Seul mode silencieux qui subsiste dans le projet, et uniquement pour la
+  // stratégie « ombre » (voir strategies.js / predictor.js).
+  // Phase 1 : on attend la 1ʳᵉ perte (référence).
+  // Phase 2 : on mesure l'écart jusqu'à la perte suivante ; écart >= intervalle
+  //           MAX → retour phase 1 ; écart ≤ intervalle MAX → confirmé, N = écart.
+  // Phase 3 : décompte silencieux ; la N-ᵉ prédiction depuis la confirmation
+  //           part dans le canal PUBLIC (une perte pendant le décompte
+  //           interrompt et redevient la référence).
+  if (!canSend(pred.strategy)) {
+    pred.silent = true;
+    pred.gate = gateView(pred.strategy).label;
+    // « ombre » : un seul canal (public), utilisé uniquement une fois le mode
+    // silencieux débloqué. Tant que le filtre est bloqué, rien n'est envoyé
+    // nulle part (pas de canal silencieux séparé pour cette stratégie).
+    // « 2ᵉ carte du joueur » : la pause se fait en arrière-plan, sans aucun canal silencieux.
+    if (pred.strategy === 'ombre' || pred.strategy === 'secondeCarte') return;
+    const shadowIds = strategyChannels(pred.strategy, 'shadow');
+    if (!shadowIds.length) return;
+    await sendPrediction(pred, sender, shadowIds);
+    return;
+  }
+  pred.silent = false;
+  const ids = strategyChannels(pred.strategy);
+  if (!ids.length) { state.sendErrors[pred.strategy] = 'Aucun canal configuré'; return; }
+  await sendPrediction(pred, sender, ids);
+  // panneau « Prédit » : reprise si la stratégie est certifiée 100%
+  try { await predit.mirror(pred); } catch (e) { predit.panel.lastError = e.message; }
+  // le déclencheur automatique consomme l'autorisation d'envoi
+  if (pred.messages.length) noteSent(pred.strategy);
+  // le filtre « double perte » consomme aussi l'autorisation si l'envoi est
+  // limité à une seule prédiction (sendOnlyNext)
+  if (pred.messages.length) noteGateSent(pred.strategy);
+  // « ombre » : la prédiction de la position annoncée vient réellement de
+  // partir dans le canal public → on referme l'entrée de l'historique des
+  // annonces (voir /ombreannonces).
+  if (pred.strategy === 'ombre' && pred.messages.length) fulfillAnnouncement('ombre', pred.target);
+  pred.gate = gateView(pred.strategy).label;
+}
+
+// ---------------------------------------------------------------------------
+// Annonce publique de la CONFIRMATION du filtre « double perte » (stratégie
+// « ombre ») : dès que la 2ᵉ perte confirme la mesure (phase 2 → phase 3),
+// CHANGEMENT : cette confirmation n'est PLUS envoyée dans le canal public.
+// L'entrée créée par pushAnnouncement() (voir predictor.js) sert UNIQUEMENT
+// de repère interne pour que la phase 3 se souvienne de la position à
+// atteindre, et pour l'affichage admin via /ombreannonces. Seule la vraie
+// prédiction, une fois la position atteinte, part réellement dans le canal
+// public (voir broadcast()/fulfillAnnouncement()). Cette fonction et son
+// branchement (setOnConfirm) sont donc désormais désactivés.
+function ordinalFr(n) {
+  return n === 1 ? '1ʳᵉ' : `${n}ᵉ`;
+}
+
+async function sendPrediction(pred, sender, ids) {
+  state.sendErrors[pred.strategy] = null;
+  const { text, parse_mode } = predictionText(pred);
+  for (const id of [...new Set(ids)]) {
+    if (predictionControl.isPaused()) {
+      pred.silent = true;
+      pred.gate = '⏸️ Arrêt global — envoi interrompu';
+      break;
+    }
+    try {
+      const m = await sender.sendMessage(id, text, parse_mode ? { parse_mode } : {});
+      if (m && m.gated) { // retenue par « Envoi après perte » : ni publiée, ni comptée ; on garde seulement le canal pour suivre son résultat
+        (pred.gatedChannels = pred.gatedChannels || []).push(id);
+        continue;
+      }
+      pred.messages.push({ chatId: id, messageId: m.message_id });
+      countSent(pred.strategy);
+    } catch (e) {
+      state.sendErrors[pred.strategy] = `${id} : ${e.message}`;
+    }
+  }
+}
+
+async function updateResult(pred) {
+  if (db.ready) db.closePrediction(pred);
+  // « Envoi après perte » par canal : le résultat (gagné / perdu) de chaque prédiction, envoyée OU retenue, alimente le canal
+  try { for (const id of [...new Set([...(pred.messages || []).map((m) => m.chatId), ...(pred.gatedChannels || [])])]) { channelLossGate.recordResult(id, pred.status); channelUniform.recordResult(id, pred.status); } } catch (_) { /* suivi seulement */ }
+  const sender = senderFor();
+  if (!sender) return;
+  const { text, parse_mode } = predictionText(pred);
+  for (const m of pred.messages) {
+    try {
+      await sender.editMessageText(text, { chat_id: m.chatId, message_id: m.messageId, ...(parse_mode ? { parse_mode } : {}) });
+    } catch (e) {
+      try { await sender.sendMessage(m.chatId, text, { reply_to_message_id: m.messageId, ...(parse_mode ? { parse_mode } : {}) }); } catch (_) {}
+    }
+  }
+  // message de perte + rappel formation VIP (voir loss-notice.js), envoyé
+  // dans CES MÊMES canaux — pour TOUTE stratégie, existante comme IA (voir
+  // aussi predit.js/update() pour le panneau « Prédit IA »). CASE PAR
+  // STRATÉGIE (state.strategies[pred.strategy].lossNoticeEnabled — voir
+  // strategies.js/defaultsFor), désactivée par défaut — les deux réglages
+  // (général + celui-ci) doivent être activés à la fois.
+  const stratCfg = state.strategies[pred.strategy];
+  if (!predictionControl.isPaused() && pred.status === 'perdu' && pred.messages.length && stratCfg && stratCfg.lossNoticeEnabled && lossNotice.getSettings().enabled) {
+    const noticeText = lossNotice.buildText();
+    for (const m of pred.messages) {
+      try { await sender.sendMessage(m.chatId, noticeText); } catch (_) {}
+    }
+  }
+}
+
+// Reconnexion automatique de la base : si elle n'est pas joignable au démarrage
+// (ou tombe en panne), on retente régulièrement puis on relit les configurations.
+let dbRetryAt = 0;
+async function ensureDb() {
+  if (db.ready) return;
+  if (Date.now() - dbRetryAt < 30000) return;
+  dbRetryAt = Date.now();
+  const s = await db.connect();
+  if (s.ready) {
+    console.log('🗄️ Base de données reconnectée');
+    await auth.ensureAdminSeed();
+    // CORRECTIF : si des changements locaux sont restés en attente pendant la
+    // coupure (dbDirty), on les POUSSE d'abord vers la base — sinon
+    // applyDbConfigs() relirait l'ancienne valeur encore en base et écraserait
+    // silencieusement le changement (ex. un ID de canal tout juste modifié).
+    if (dbDirty) {
+      await saveConfigsToDb();
+      dbDirty = false;
+      console.log('🧠 Changements en attente poussés vers la base (dbDirty)');
+    } else {
+      const r = await applyDbConfigs();
+      console.log('🧠 Configurations relues : ' + ((r.loaded || []).join(', ') || 'aucune'));
+    }
+  }
+}
+
+async function tick() {
+  if (ticking) {
+    // un tick précédent tourne encore : on saute celui-ci, sauf s'il est bloqué depuis trop longtemps (v123)
+    if (Date.now() - tickStartedAt < TICK_MAX_MS) return;
+    console.error(`⚠️ Passage de la boucle bloqué depuis ${Math.round((Date.now() - tickStartedAt) / 1000)} s : reprise forcée`);
+    state.lastError = 'boucle principale bloquée : reprise forcée';
+  }
+  ticking = true;
+  tickStartedAt = Date.now();
+  const myTick = ++tickSeq;
+  try {
+    await raceTimeout(ensureDb(), 30000, 'base de données');
+    const games = await raceTimeout(api.fetchGames(), FETCH_MAX_MS, 'API 1xbet');
+    state.lastError = null;
+    registerGames(games);
+
+    // CORRECTIF « bilan pendant l'envoi des prédictions / un bilan par jour » :
+    // traité et ATTENDU ici, avant tout le reste (verify/evaluate/broadcast)
+    // — voir pendingBilan plus haut. Comme tick() ne se chevauche jamais
+    // (garde `ticking`), aucune prédiction (nouvelle ou « ombre ») ne peut
+    // être diffusée tant que l'envoi du bilan n'est pas terminé.
+    if (pendingBilan && !predictionControl.isPaused()) {
+      const { seq, previousMax } = pendingBilan;
+      pendingBilan = null;
+      if (seq !== lastBilanShoeSeq) {
+        lastBilanShoeSeq = seq;
+        persist();
+        await flushBilans(`journée terminée (${previousMax} jeux, retour à 1)`);
+      }
+    }
+
+    // déblocage automatique des stratégies bloquées depuis plus de 10 minutes
+    const freed = sweepAutoUnlock();
+    if (freed.length) console.log('🔓 Déblocage automatique : ' + freed.join(', '));
+
+    // retard d'envoi : libère les prédictions retenues dont l'heure est venue
+    // (AVANT verify() pour annuler celles dont le jeu cible a déjà commencé)
+    if (!predictionControl.isPaused()) { try { await sendDelay.releaseDue(state, broadcast); } catch (e) { state.lastError = e.message; } }
+
+    const closed = verify();
+    for (const p of closed) {
+      await updateResult(p);
+      bilanPending.add(p.strategy);           // bilan dès que le jeu reprend
+    }
+
+    // planification quotidienne (arrêt/reprise auto) : voir prediction-control.js
+    predictionControl.tickSchedule();
+
+    // INTERRUPTEUR GLOBAL « arrêter les prédictions » (demande admin,
+    // commandable par l'administrateur du canal — voir prediction-control.js
+    // et le handler channel_post plus bas). Tant qu'il est actif, on saute
+    // ENTIÈREMENT la génération et l'envoi de nouvelles prédictions (toutes
+    // stratégies + tous les panneaux ci-dessous) — mais on continue de lire
+    // les jeux en direct et de vérifier/éditer les prédictions déjà envoyées
+    // AVANT l'arrêt (verify()/updateResult() ci-dessus, non concernés par ce
+    // garde-fou), pour qu'aucun message ne reste bloqué « en attente ».
+    if (predictionControl.isPaused()) return;
+
+    // « ombre » : une prédiction est créée (et envoyée, ou pas) au moment où
+    // evaluate() la détecte — mais le filtre « double perte » peut s'ouvrir
+    // PLUS TARD, après coup, suite à une perte confirmée ci-dessus (verify()
+    // vient d'appeler noteClosed()). CORRECTIF : sans ceci, une prédiction
+    // déjà calculée en silence (canal jamais configuré au moment de sa
+    // création) restait bloquée pour toujours, même une fois le filtre
+    // ouvert — rien ne revenait jamais la chercher pour l'envoyer. On
+    // reprend ici la plus ancienne prédiction ombre jamais envoyée (encore
+    // en attente, OU déjà résolue en silence) et on l'envoie maintenant que
+    // c'est autorisé — avec son résultat réel si elle est déjà terminée.
+    // CORRECTIF FILE D'ATTENTE : la file « ombre » peut contenir plusieurs
+    // positions confirmées d'affilée (voir predictor.js). On les envoie donc
+    // en BOUCLE tant que canSend() reste vrai — jamais une seule par tick —
+    // afin de ne jamais en laisser une bloquée derrière une autre déjà prête.
+    // Chaque envoi dépile la tête de file (fulfillAnnouncement), donc canSend()
+    // reflète ensuite l'état de la position suivante, toujours dans l'ordre.
+    let guard = 0;
+    while (!predictionControl.isPaused() && canSend('ombre') && guard++ < 20) {
+      // CORRECTIF : exclure les prédictions « annulé » (tuées par un reset de
+      // sabot en cours de décompte, voir resetShoe()). Sans ce filtre, dès que
+      // la position N était enfin prête, le bot pouvait ressusciter une vieille
+      // prédiction annulée d'un sabot précédent (target obsolète) au lieu de
+      // laisser la vraie prédiction « ombre » du sabot courant partir — ce qui
+      // désynchronisait complètement la position réellement envoyée par
+      // rapport à celle annoncée dans /ombreannonces.
+      // CORRECTIF #2 : même problème avec un cycle (phase 1→2→3) ABANDONNÉ
+      // (changement de réglages, déblocage manuel qui remet tout à zéro…) : la
+      // prédiction « ombre » restée silencieuse de ce cycle-là n'était ni
+      // envoyée ni annulée, donc toujours candidate au rattrapage. On ignore
+      // donc toute prédiction antérieure à la plus ancienne référence encore
+      // active (file d'attente comprise) — voir queueFloor().
+      // CORRECTIF (décalage de position) : comparaison désormais STRICTE
+      // (`>` et non `>=`) — le floor pointe sur le numéro de la dernière
+      // prédiction déjà comptée dans le décompte silencieux (perte de
+      // référence comprise) ; elle-même ne doit jamais être reprise comme
+      // « prédiction publique », seule la vraie suivante doit l'être.
+      // CORRECTIF (envoi déjà vérifié) : avant, cette recherche reprenait
+      // la plus ancienne prédiction « ombre » jamais envoyée MÊME si son
+      // tour était déjà terminé et vérifié en silence (status gagné/perdu) —
+      // le canal public recevait alors un message annonçant une prédiction
+      // dont le résultat était déjà connu, au lieu d'une vraie prédiction
+      // envoyée AVANT le tour puis vérifiée ensuite normalement. On ne
+      // reprend donc plus qu'une prédiction encore « en attente » (tour pas
+      // encore joué) : si aucune ne l'est, on attend simplement le prochain
+      // déclencheur « ombre » plutôt que de publier un résultat déjà acquis.
+      const floor = queueFloor('ombre');
+      const stuck = state.predictions
+        .filter((p) => p.strategy === 'ombre' && p.status === 'en attente' && (!p.messages || !p.messages.length)
+          && (floor == null || p.target > floor))
+        .sort((a, b) => a.target - b.target)[0];
+      if (!stuck) break;
+      await broadcast(stuck);
+    }
+
+    // Le bilan (résumé complet : toutes stratégies + IA) part désormais
+    // directement au moment où le sabot se termine (numéros revenus à 1),
+    // via le hook sendBilanIfDayOver() ci-dessous — voir sa définition pour
+    // la logique « vraie fin de journée » (filtrage des remises à zéro
+    // isolées) et la garde anti-doublon (lastBilanShoeSeq).
+
+    const preds = evaluate();
+    for (const pred of preds) {
+      if (predictionControl.isPaused()) break;
+      if (pred.holdSend) continue; // retard d'envoi : sera envoyée par sendDelay.releaseDue()
+      await broadcast(pred);
+    }
+
+    // CORRECTIF (envoi en retard) : ces panneaux sont INDÉPENDANTS les uns
+    // des autres (chacun a son propre état/canaux et ne fait que LIRE
+    // state.games / state.predictions en commun). Avant, ils étaient
+    // enchaînés un par un avec await : si un panneau mettait du temps à
+    // envoyer ses messages Telegram (plusieurs canaux, réseau lent), TOUS
+    // les panneaux suivants — dont « combinaison » et « même costume » —
+    // attendaient avant même de commencer leur scan, avec un retard cumulé
+    // à chaque panneau. On les lance maintenant en parallèle avec
+    // Promise.all pour qu'ils partent tous au même tick, sans s'attendre
+    // les uns les autres.
+    if (predictionControl.isPaused()) return;
+    await raceTimeout(Promise.all([
+      // panneau « Prédit » : prédictions certifiées à 100% (IA)
+      predit.tick(),
+      // panneau « Prédiction après perte » : relais de la prochaine
+      // prédiction d'une stratégie suivie (existante ou IA) après N pertes
+      // consécutives.
+      afterLoss.tick(),
+      // panneau « Formation » : pour chaque stratégie cochée, lecture de la
+      // formation après une perte, puis publication de la prédiction
+      // confirmée (et du « Bingo » si elle est gagnée) dans le canal
+      // configuré.
+      formationRelay.tick(),
+      // panneau « Prédiction combinée pour costume joueur » : sources
+      // multiples (stratégies + formations), déclencheur consécutif par
+      // niveau de rattrapage, prédiction synthétisée même costume/inverse +w.
+      combined.tick(),
+      // panneau « Série de costume » : sélection d'UNE source (stratégie,
+      // IA ou formation), série de N prédictions consécutives de MÊME
+      // costume — déclenchement immédiat si aucune perte dans la série,
+      // sinon attente du retour de ce costume avant de déclencher (voir
+      // suit-streak.js).
+      suitStreak.tick(),
+      // stratégie « Dizaine — costume le plus / le moins sorti » : configurations
+      // multiples, comptage par dizaine de jeux (voir dizaine-top.js).
+      dizaineTop.tick(),
+      // « Meilleur + plus faible » : vérification des messages à deux costumes (voir best-weak-top.js)
+      Promise.resolve(bestWeakTop.tick()),
+      // « Retour après perte » : vérification des prédictions des canaux suivis, retour N+D, rapport (voir loss-return.js)
+      Promise.resolve(lossReturn.tick()),
+      // « Relance après perte » : vérification des prédictions des canaux suivis ; une perte lance le même costume à +N (voir loss-relaunch.js)
+      Promise.resolve(lossRelaunch.tick()),
+      // « Confirmation » : perte ou ✅ au rattrapage 4 d'un canal suivi → sa prochaine prédiction est envoyée dans l'autre canal (voir confirmation.js)
+      Promise.resolve(confirmation.tick()),
+      // « Appel APK » : création de la table apk_calls dans Supabase, nettoyage (voir apk-call.js)
+      Promise.resolve(apkCall.tick()),
+      // « Costume N-1 → +4 » : costume venu à N-1 et absent à N → prédiction à N+4 (voir prev-suit.js)
+      Promise.resolve(prevSuit.tick()),
+      // « Miracle prediction » : reprise de la prédiction suivante d'une stratégie après sa perte, consensus de 5 stratégies (voir miracle-prediction.js)
+      Promise.resolve(miracle.tick()),
+      // « Miracle série » : série de prédictions après une perte, jusqu'à ✅1️⃣ / ✅2️⃣ de la stratégie (voir miracle-serie.js)
+      Promise.resolve(miracleSerie.tick()),
+      // « Canal Telegram » : vérification uniforme des prédictions lues dans chaque canal-stratégie (voir canal-telegram.js)
+      Promise.resolve(canalTelegram.tick()),
+      // « Prédiction fin de numéro » : meilleur costume du joueur, repli faible + inverse si le meilleur ne valide pas (voir end-digit-predict.js)
+      Promise.resolve(endDigitPredict.tick()),
+      // « Palier parité » : costume au plus faible pourcentage du palier du Compte parité, 3 rattrapages, enchaînement (voir parity-palier.js)
+      Promise.resolve(parityPalier.tick()),
+      // « Trio fin de numéro » : à chaque fin de dizaine, les 3 meilleures fins de numéro de l'analyse (50-59 % : le costume, 60 % et + : son inverse) + suivi dans un autre canal (voir end-digit-trio.js)
+      Promise.resolve(endDigitTrio.tick()),
+      // « Distribution faible » : 2/2, 3/2, 3/3, 2k, 3k au taux faible (3-15 %) du Compte distribution, une à la fois, écart ≥ 2 (voir distribution-faible.js)
+      Promise.resolve(distributionFaible.tick()),
+      // « Palier parité égalité » : deux taux faibles égaux → costume du 2e taux, +0 ou +3, envoi 2 jeux avant (voir parity-egalite.js)
+      Promise.resolve(parityEgalite.tick()),
+      // « Stabilité du jeu » : 4 jeux analysés, alertes privées, bilan horaire, blocage des canaux (voir game-stability.js)
+      Promise.resolve(gameStability.tick()),
+      // stratégie « Costume faible sur 2 cartes (miroir) » : configurations
+      // multiples (voir costume-faible-top.js).
+      costumeFaibleTop.tick(),
+      // panneau « Rupture de costume » : sélection d'UNE source (stratégie,
+      // IA ou formation), série de N prédictions consécutives de MÊME
+      // costume puis attente de la RUPTURE (prochain costume différent) —
+      // la rupture déclenche sur son propre numéro, en prédisant le costume
+      // original (voir suit-break.js).
+      suitBreak.tick(),
+      // panneau « Chevauchement de prédictions » : surveille UNE source
+      // (stratégie, IA, formation, ou un autre panneau), déclenche sur la
+      // 2ᵉ prédiction quand elle arrive avant que la 1ʳᵉ soit vérifiée —
+      // même prédiction / miroir / +n (voir overlap.js).
+      overlap.tick(),
+      // panneau « Statistiques » : relais brut (pas de prédiction) des
+      // costumes/cartes reçus de l'API Baccara vers un canal Telegram
+      // configuré, avec la notation demandée (voir statistics.js).
+      statistics.tick(),
+      // panneau « Comptage 2/2 » : comptage des catégories 3/2, 3/3, 2/2 par
+      // lot de 30 jeux (1→30, 31→60, 61→90…) et UNE prédiction par lot sur
+      // début+34 déclenchées quand le jeu en live arrive à −3/−2 de la
+      // cible (voir cards-count.js).
+      cardsCount.tick(),
+      // panneau « Nul / 2-3 » : prédit ensemble le match nul (X) ou le 2/3 (voir draw-two-three.js)
+      drawTwoThree.tick(),
+      // panneau « Victoire V1 / V2 » : prédit ensemble la victoire du joueur (V1) ou du banquier (V2), déclencheurs trouvés par l'analyse (voir victoire-vb.js)
+      victoireVb.tick(),
+      // panneau « VIP » : liste à cocher de toutes les stratégies (+ IA) ;
+      // relais des 2 prochaines prédictions d'une stratégie cochée après 3
+      // pertes consécutives, ou après 3 prédictions consécutives du même
+      // costume, dans le canal VIP configuré (voir vip.js).
+      vip.tick(),
+    ]), MODULES_MAX_MS, 'panneaux de prédiction');
+  } catch (e) {
+    state.lastError = e.message;
+  } finally {
+    if (tickSeq === myTick) ticking = false; // un ancien passage bloqué qui se termine tard ne doit pas libérer le passage en cours
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Configurations <-> base de données
+// ---------------------------------------------------------------------------
+// Enregistre TOUTES les configurations existantes (réglages globaux + chaque
+// stratégie) dans la base de données.
+async function saveConfigsToDb() {
+  if (!db.ready) return { ok: false, error: 'Base de données non connectée' };
+  await db.setSetting('B', state.B);
+  await db.setSetting('maxR', state.maxR);
+  await db.setSetting('format', state.format);
+  await db.setSetting('template', state.template || '');
+  await db.setSetting('ai_auto_enabled', aiAuto.auto.enabled ? 'true' : 'false');
+  const keys = [];
+  for (const def of strategies.LIST) {
+    const cfg = state.strategies[def.key];
+    if (!cfg) continue;
+    await db.saveStrategy(def.key, def.name, cfg);
+    keys.push(def.key);
+  }
+  return { ok: true, saved: keys };
+}
+
+// Lit les configurations enregistrées. Si la base est vide (première
+// connexion), les configurations en cours y sont écrites automatiquement.
+async function applyDbConfigs() {
+  if (!db.ready) return { ok: false, error: 'Base de données non connectée' };
+  const B = await db.getSetting('B');
+  const maxR = await db.getSetting('maxR');
+  const tpl = await db.getSetting('template');
+  const fmtId = await db.getSetting('format');
+  if (B) state.B = parseInt(B, 10) || state.B;
+  if (maxR != null) state.maxR = parseInt(maxR, 10);
+  if (fmtId) state.format = parseInt(fmtId, 10) || state.format;
+  if (tpl !== null) state.template = tpl ? tpl : null;
+  // token API, ID administrateur et canaux enregistrés : restaurés au démarrage.
+  // CORRECTIF : la base de données est la seule source durable (le fichier
+  // data.json local est effacé à chaque redéploiement Render, sans disque
+  // persistant). Avant, la DB ne servait qu'à COMPLÉTER un état déjà vide —
+  // si data.json contenait encore d'anciennes valeurs (canal supprimé,
+  // redéployé sur un autre disque, etc.), elles gagnaient silencieusement et
+  // la DB n'était jamais vraiment consultée. Désormais, dès que la DB est
+  // connectée, ses valeurs priment toujours sur l'état local.
+  const app = await db.loadAppConfig();
+  const restored = [];
+  if (app) {
+    if (app.botToken) { state.botToken = app.botToken; restored.push('token'); }
+    if (app.adminId) { state.adminId = app.adminId; restored.push('admin'); }
+    if (Array.isArray(app.channels) && app.channels.length) {
+      state.channels = app.channels; restored.push('canaux');
+    }
+    if (Array.isArray(app.activeChannels) && app.activeChannels.length) {
+      state.activeChannels = app.activeChannels; restored.push('canaux actifs');
+    }
+    if (Array.isArray(app.siteChannels) && app.siteChannels.length) {
+      state.siteChannels = app.siteChannels; restored.push('canaux du site');
+    }
+  }
+  if (!state.siteChannels.length) {
+    const rawSiteChannels = await db.getSetting('site_channels');
+    if (rawSiteChannels) {
+      try {
+        const parsed = JSON.parse(rawSiteChannels);
+        if (Array.isArray(parsed) && parsed.length) { state.siteChannels = parsed; restored.push('canaux du site'); }
+      } catch (_) { /* ignore */ }
+    }
+  }
+  const rows = await db.loadStrategies();
+  const loaded = [];
+  for (const [key, cfg] of Object.entries(rows)) {
+    if (!strategies.BY_KEY[key]) continue;
+    state.strategies[key] = { ...strategies.defaultsFor(key), ...cfg };
+    loaded.push(key);
+  }
+  initStrategies();
+  // base vide OU nouvelles stratégies absentes → on les enregistre tout de suite
+  const missing = strategies.LIST.filter((d) => !loaded.includes(d.key)).map((d) => d.key);
+  if (missing.length) await saveConfigsToDb();
+
+  // CORRECTIF DÉPLOIEMENT : la stratégie « ombre » doit toujours démarrer avec
+  // lossTrigger=2 (double perte), lossWindow=6 et lossInterval=5. Comme la
+  // stratégie « ombre » existe déjà en base depuis longtemps, applyDbConfigs()
+  // prend TOUJOURS la valeur déjà enregistrée en base (spread `...cfg` après
+  // les defaults) — changer strategies.js seul ne suffit donc jamais à faire
+  // apparaître un nouveau default une fois la ligne déjà créée. On force ici
+  // ces 3 réglages à chaque démarrage et on les ré-enregistre si besoin.
+  const OMBRE_FORCED_DEFAULTS = { lossTrigger: 2, lossWindow: 6, lossInterval: 5 };
+  if (state.strategies.ombre) {
+    let changed = false;
+    for (const [k, v] of Object.entries(OMBRE_FORCED_DEFAULTS)) {
+      if (state.strategies.ombre[k] !== v) { state.strategies.ombre[k] = v; changed = true; }
+    }
+    if (changed) await db.saveStrategy('ombre', strategies.BY_KEY.ombre.name, state.strategies.ombre);
+  }
+
+  // filtre « double perte » (gates) : restauré depuis la base pour survivre à
+  // un redémarrage du process (veille Render Free, redéploiement, crash…),
+  // sinon 2 pertes réellement tombées avant un redémarrage étaient « oubliées ».
+  const gateRows = await db.loadGates();
+  for (const [key, g] of Object.entries(gateRows)) {
+    if (g && typeof g === 'object') state.gates[key] = g;
+  }
+
+  // annonces de position (/ombreannonces) : même raisonnement que les gates
+  // ci-dessus — sans cette restauration, une confirmation déjà en cours avant
+  // le redémarrage n'apparaissait plus jamais dans la liste.
+  const announcementRows = await db.loadAnnouncements();
+  restoreAnnouncements(announcementRows);
+
+  // CORRECTIF « bouton Créé par moi avec IA » : même raisonnement que les
+  // annonces ci-dessus — sans cette restauration, la liste des stratégies
+  // créées par l'IA repartirait vide à chaque redémarrage (y compris celui
+  // déclenché automatiquement juste après une création, voir server.js).
+  const createdKeysRaw = await db.getSetting('ai_created_strategy_keys');
+  const createdHistoryRaw = await db.getSetting('ai_created_strategy_history');
+  try {
+    aiRepair.restoreCreated(
+      createdKeysRaw ? JSON.parse(createdKeysRaw) : null,
+      createdHistoryRaw ? JSON.parse(createdHistoryRaw) : null,
+    );
+  } catch (_) { /* données corrompues — on repart d'une liste vide, pas bloquant */ }
+
+  // Stratégies IA : la base est la source de vérité (data.json est perdu à
+  // chaque redéploiement/redémarrage sur les plateformes sans disque persistant).
+  const aiRows = await db.loadAiStrategies();
+  if (aiRows.length) {
+    state.aiStrategies = aiRows;
+  } else if ((state.aiStrategies || []).length) {
+    // rien en base encore : on migre ce qui existait localement (data.json)
+    for (const item of state.aiStrategies) await db.saveAiStrategy(item);
+  }
+  const analyses = await db.loadAiAnalyses(12);
+  if (analyses.length) state.aiAnalyses = analyses;
+  const autoEnabled = await db.getSetting('ai_auto_enabled');
+  if (autoEnabled !== null) aiAuto.auto.enabled = autoEnabled !== 'false';
+  // clés Gemini / Groq saisies à chaud depuis la page Analyseur IA : rechargées
+  // ici pour survivre à un redémarrage/redéploiement (Render sans disque
+  // persistant efface le reste). Comme pour la clé Pollinations existante, la
+  // clé à chaud prime sur la variable d'environnement si les deux sont définies
+  // (voir geminiKey()/groqKey() dans ai-analyzer.js).
+  const geminiKeySaved = await db.getSetting('ai_gemini_key');
+  if (geminiKeySaved) ai.setGeminiKey(geminiKeySaved);
+  const groqKeySaved = await db.getSetting('ai_groq_key');
+  if (groqKeySaved) ai.setGroqKey(groqKeySaved);
+  const openrouterKeySaved = await db.getSetting('ai_openrouter_key');
+  if (openrouterKeySaved) ai.setOpenrouterKey(openrouterKeySaved);
+
+  store.patch({
+    strategies: state.strategies,
+    botToken: state.botToken,
+    adminId: state.adminId,
+    channels: state.channels,
+    activeChannels: state.activeChannels,
+    aiStrategies: state.aiStrategies,
+    aiAnalyses: state.aiAnalyses,
+  });
+  await predit.restoreFromDb();
+  await afterLoss.restoreFromDb();
+  await combined.restoreFromDb();
+  await suitStreak.restoreFromDb();
+  await dizaineTop.restoreFromDb();
+  await bestWeakTop.restoreFromDb();
+  await lossReturn.restoreFromDb();
+  await lossRelaunch.restoreFromDb();
+  await confirmation.restoreFromDb();
+  await apkCall.restoreFromDb();
+  await prevSuit.restoreFromDb();
+  await miracle.restoreFromDb();
+  await miracleSerie.restoreFromDb();
+  await canalTelegram.restoreFromDb();
+  await channelUniform.restoreFromDb();
+  await endDigitPredict.restoreFromDb();
+  await parityPalier.restoreFromDb();
+  await endDigitTrio.restoreFromDb();
+  await distributionFaible.restoreFromDb();
+  await parityEgalite.restoreFromDb();
+  await gameStability.restoreFromDb();
+  await absenceAlert.restoreFromDb();
+  await analyseManque.restoreFromDb();
+  await channelLossGate.restoreFromDb();
+  await costumeFaibleTop.restoreFromDb();
+  await midnightReset.restoreFromDb();
+  await strategyRecap.restoreFromDb();
+  await copyAnnounce.restoreFromDb();
+  await betType.restoreFromDb();
+  await suitBreak.restoreFromDb();
+  await overlap.restoreFromDb();
+  await statistics.restoreFromDb();
+  await cardsCount.restoreFromDb();
+  await drawTwoThree.restoreFromDb();
+  await victoireVb.restoreFromDb();
+  await vip.restoreFromDb();
+  try { const raw = await db.getSetting('ignored_channels'); if (raw) store.patch({ ignoredChannels: JSON.parse(raw) }); } catch (_) {} // canaux supprimés (Envois)
+  await predictionControl.restoreFromDb();
+  // bilans par stratégie (voir predictor.js/restorePredictions) : recharge
+  // depuis la base les prédictions encore « en attente » + les dernières
+  // résolues, pour que gagné/perdu/total ne repartent pas à zéro à chaque
+  // redémarrage du process.
+  const restoredCount = await restorePredictions();
+  if (restoredCount) console.log(`♻️  ${restoredCount} prédiction(s) restaurée(s) depuis la base pour les bilans.`);
+  await mirrorCounter.loadFromDb();
+  await parityCounter.restoreFromDb();
+  await distributionCounter.restoreFromDb();
+  slowMode.restore();
+  await slowMode.restoreFromDb();
+  await lossNotice.loadFromDb();
+  return { ok: true, loaded, added: missing, restored, aiStrategiesLoaded: aiRows.length };
+}
+
+// ---------------------------------------------------------------------------
+// « Rapport de fin de sabot » : dès que le jeu revient à #N1 (nouveau sabot,
+// voir resetShoe() dans predictor.js), on génère le PDF listant, pour
+// CHACUNE des 7 stratégies, les déclencheurs « après perte » dont le taux
+// mesuré sur l'historique réel est ≥ 75%, avec un conseil ciblé — puis on
+// l'envoie en document Telegram à l'ADMINISTRATEUR (c'est une analyse
+// interne, pas une prédiction à publier dans un canal public).
+// ---------------------------------------------------------------------------
+let shoeReportBusy = false;
+async function sendShoeReport(reason, seq) {
+  if (shoeReportBusy) return false; // pas deux rapports en parallèle si plusieurs resets rapprochés
+  const sender = senderFor();
+  if (!sender || !state.adminId) return false;
+  shoeReportBusy = true;
+  try {
+    const { pdf } = await shoeReport.generate();
+    await sender.sendDocument(
+      state.adminId,
+      pdf,
+      { caption: `📄 Rapport de fin de sabot #${seq} (${reason}) — déclencheurs ≥ ${shoeReport.MIN_RATE}% des 7 stratégies.` },
+      { filename: `rapport-sabot-${seq}.pdf`, contentType: 'application/pdf' }
+    );
+    return true;
+  } catch (e) {
+    console.error('Rapport de fin de sabot : envoi échoué —', e.message);
+    return false;
+  } finally {
+    shoeReportBusy = false;
+  }
+}
+
+async function startLoop() {
+  predit.restore();
+  predit.setSender(senderFor);
+  game21Predict.restore();
+  game21Predict.setSender(senderFor);
+  afterLoss.restore();
+  afterLoss.setSender(senderFor);
+  combined.restore();
+  combined.setSender(senderFor);
+  suitStreak.restore();
+  suitStreak.setSender(senderFor);
+  dizaineTop.restore();
+  bestWeakTop.restore();
+  bestWeakTop.setSender(senderFor);
+  bestWeakTop.setAdminId(() => state.adminId);
+  lossReturn.restore();
+  lossReturn.setSender(senderFor);
+  lossRelaunch.restore();
+  lossRelaunch.setSender(senderFor);
+  confirmation.restore();
+  confirmation.setSender(senderFor);
+  apkCall.restore();
+  prevSuit.restore();
+  prevSuit.setSender(senderFor);
+  miracle.restore();
+  miracle.setSender(senderFor);
+  miracle.setAdminId(() => state.adminId);
+  miracleSerie.restore();
+  miracleSerie.setSender(senderFor);
+  canalTelegram.restore();
+  channelUniform.restore();
+  endDigitPredict.restore();
+  endDigitPredict.setSender(senderFor);
+  parityPalier.restore();
+  parityPalier.setSender(senderFor);
+  endDigitTrio.restore();
+  endDigitTrio.setSender(senderFor);
+  distributionFaible.restore();
+  distributionFaible.setSender(senderFor);
+  parityEgalite.restore();
+  parityEgalite.setSender(senderFor);
+  gameStability.restore();
+  gameStability.setSender(senderFor);
+  gameStability.setAdminId(() => state.adminId);
+  absenceAlert.restore();
+  absenceAlert.setSender(senderFor);
+  absenceAlert.setAdminId(() => state.adminId);
+  analyseManque.restore();
+  analyseManque.setSender(senderFor);
+  analyseManque.setAdminId(() => state.adminId);
+  channelLossGate.restore();
+  costumeFaibleTop.restore();
+  midnightReset.restore();
+  midnightReset.setSender(senderFor);
+  strategyRecap.restore();
+  strategyRecap.setContext({ state, strategyChannels, senderFor, isPaused: () => predictionControl.isPaused() });
+  dizaineTop.setSender(senderFor);
+  dizaineTop.setAdminId(() => state.adminId);
+  costumeFaibleTop.setSender(senderFor);
+  costumeFaibleTop.setAdminId(() => state.adminId);
+  copyAnnounce.restore();
+  copyAnnounce.setSender(senderFor);
+  betType.restore();
+  betType.setSender(senderFor);
+  // « Type de mise » tourne aussi sur sa propre minuterie (comme « Copie et annonce »).
+  if (!global.__betTypeTimer) {
+    global.__betTypeTimer = setInterval(() => {
+      betType.tick({ paused: predictionControl.isPaused() }).catch(() => {});
+    }, 4000);
+  }
+  // « Copie et annonce » tourne sur SA PROPRE minuterie : elle ne dépend ni
+  // du flux de jeux (tick() s'arrête si l'API échoue) ni de la pause des
+  // prédictions pour mettre à jour les résultats copiés ; les annonces
+  // planifiées partent à l'heure même si le flux est coupé.
+  if (!global.__copyAnnounceTimer) {
+    global.__copyAnnounceTimer = setInterval(() => {
+      copyAnnounce.tick({ paused: predictionControl.isPaused() }).catch(() => {});
+    }, 4000);
+  }
+  suitBreak.restore();
+  suitBreak.setSender(senderFor);
+  overlap.restore();
+  overlap.setSender(senderFor);
+  statistics.restore();
+  statistics.setSender(senderFor);
+  cardsCount.restore();
+  cardsCount.setSender(senderFor);
+  drawTwoThree.restore();
+  drawTwoThree.setSender(senderFor);
+  drawTwoThree.setAdminId(() => state.adminId);
+  victoireVb.restore();
+  victoireVb.setSender(senderFor);
+  victoireVb.setAdminId(() => state.adminId);
+  vip.restore();
+  vip.setSender(senderFor);
+  formationRelay.restore();
+  formationRelay.setSender(senderFor);
+  predictionControl.restore();
+  // Compteur « Taux Miroir » : édite le même message à chaque jeu terminé
+  // (voir setOnFinished ci-dessous) plutôt que d'en renvoyer un nouveau —
+  // retombe sur un nouvel envoi si l'édition échoue (message trop
+  // vieux/supprimé côté Telegram) ou après chaque reset horaire.
+  mirrorCounter.setSender(async (channelId, text, messageId) => {
+    const sender = senderFor();
+    if (!sender) throw new Error('Aucun token API configuré dans les réglages.');
+    if (messageId) {
+      try {
+        await sender.editMessageText(text, { chat_id: channelId, message_id: messageId });
+        return messageId;
+      } catch (e) {
+        // message trop vieux/supprimé, ou contenu strictement identique
+        // (Telegram répond alors "message is not modified") : dans les deux
+        // cas on retente un envoi neuf plutôt que de laisser tomber.
+      }
+    }
+    const msg = await sender.sendMessage(channelId, text);
+    return msg.message_id;
+  });
+  mirrorCounter.scheduleHourlyReset();
+  // « Compte parité » (bouton de l'accueil) : fin de numéro 0-9 du joueur / banquier, un message par côté choisi (voir parity-counter.js)
+  parityCounter.setSender(async (channelId, text) => {
+    const sender = senderFor();
+    if (!sender) throw new Error('Aucun token API configuré dans les réglages.');
+    const msg = await sender.sendMessage(channelId, text);
+    return msg.message_id;
+  });
+  parityCounter.scheduleReset();
+  // « Compte distribution » (jumeau du compte parité) : 2/2, 3/2, 3/3, 2k, 3k par fin de numéro (voir distribution-counter.js)
+  distributionCounter.setSender(async (channelId, text) => {
+    const sender = senderFor();
+    if (!sender) throw new Error('Aucun token API configuré dans les réglages.');
+    const msg = await sender.sendMessage(channelId, text);
+    return msg.message_id;
+  });
+  distributionCounter.scheduleReset();
+  // base de données : chaque jeu terminé est archivé par date
+  setOnFinished((round) => {
+    if (db.ready) db.saveGame(round);
+    mirrorCounter.bump(round);
+    mirrorCounter.publish(round.number).catch((e) => console.error('Compteur (Taux Miroir) :', e.message));
+    parityCounter.onFinished(round).catch((e) => console.error('Compte parité :', e.message));
+    distributionCounter.onFinished(round).catch((e) => console.error('Compte distribution :', e.message));
+    absenceAlert.onFinished(round).catch((e) => console.error('Alerte absence :', e.message));
+    analyseManque.onFinished(round).catch((e) => console.error('Analyse manque :', e.message));
+  });
+  // rapport PDF des déclencheurs fiables (≥75%) des 7 stratégies, envoyé à
+  // l'admin à chaque nouveau sabot — voir sendShoeReport ci-dessus.
+  setOnShoeReset((reason, seq) => (state.wiping ? false : sendShoeReport(reason, seq)));
+  // bilan complet (toutes stratégies + IA) — envoyé quand les numéros
+  // reviennent à 1 ET que le sabot qui vient de se terminer représente une
+  // vraie journée (voir sendBilanIfDayOver ci-dessus pour le seuil).
+  setOnShoeReset((reason, seq, previousMax) => (state.wiping ? undefined : sendBilanIfDayOver(reason, seq, previousMax)));
+  setOnGateChange((key, g) => { if (db.ready) db.saveGate(key, g); });
+  setOnAnnouncementSave((entry) => { if (db.ready) db.saveAnnouncement(entry); });
+  setOnAnnouncementDelete((id) => { if (db.ready) db.deleteAnnouncement(id); });
+  // setOnConfirm : volontairement NON branché — la confirmation de position
+  // ne doit plus jamais partir dans le canal public (voir commentaire au-dessus
+  // de ordinalFr()). L'entrée reste purement interne (pushAnnouncement).
+  const s = await db.connect();
+  console.log(s.ready ? '🗄️ Base de données connectée' : `🗄️ Base non connectée : ${s.error}`);
+  if (s.ready) {
+    await auth.ensureAdminSeed();
+    const r = await applyDbConfigs();
+    if ((r.restored || []).length) console.log('🔐 Restauré depuis la base : ' + r.restored.join(', '));
+    console.log('🧠 Configurations lues en base : ' + ((r.loaded || []).join(', ') || 'aucune') +
+      ((r.added || []).length ? ' • ajoutées : ' + r.added.join(', ') : ''));
+  } else {
+    initStrategies();
+  }
+  // Import AUTOMATIQUE du classeur Excel de configuration placé dans
+  // config-import/ (une seule fois par version du fichier — voir
+  // auto-import.js). Fait AVANT startBot() pour que le token importé soit
+  // utilisé dès ce démarrage, et APRÈS la lecture de la base pour que
+  // l'import prime sur les anciens réglages.
+  try {
+    const r = await require('./auto-import').run({ dataTransfer, db, persist, saveConfigsToDb });
+    if (r.imported) console.log('📥 Import automatique : ' + r.imported + ' — ' + (r.report.applied || []).join(', '));
+    else if (r.error) console.error('⚠️ Import automatique impossible (' + (r.file || '') + ') : ' + r.error);
+    else if (r.skipped) console.log('📥 Import automatique ignoré : ' + r.skipped);
+  } catch (e) { console.error('⚠️ Import automatique : erreur inattendue :', e.message); }
+  if (!loopStarted) {
+    loopStarted = true;
+    setInterval(tick, config.POLL_INTERVAL_MS);
+    // retard d'envoi : contrôle chaque seconde (le tick ne passe que toutes les
+    // POLL_INTERVAL_MS) pour que les « +10 secondes » soient respectées à ~1 s près
+    let releasing = false;
+    setInterval(async () => {
+      if (releasing || ticking || predictionControl.isPaused()) return;
+      if (!state.predictions.some((p) => p.holdSend && p.status === 'en attente')) return;
+      releasing = true;
+      try { await sendDelay.releaseDue(state, broadcast); } catch (e) { state.lastError = e.message; } finally { releasing = false; }
+    }, 1000);
+    // « nouveau départ » de 00h00 (heure d'Abidjan) : export dans le chat privé puis
+    // effacement des données, configurations conservées (voir midnight-reset.js)
+    setInterval(() => { midnightReset.check().catch((e) => { state.lastError = e.message; }); }, 1000);
+    // récapitulatif des prédictions (case « Récapitulatif » de chaque stratégie) : toutes les 2 h, bilan à 00h puis remise à zéro
+    setInterval(() => { strategyRecap.tick().catch((e) => { state.lastError = e.message; }); }, 20000);
+    tick();
+  }
+  startBot();
+}
+
+module.exports = { predit, flushBilans, setMainChannel, broadcast, sendPrediction, updateResult, startLoop, startBot, botStatus, disconnectBot, activate, deactivate, persist, listChannels, sendBilan, dropSender, announceConfig, announceMainBot, resolveChat, testSend, senderFor, saveConfigsToDb, applyDbConfigs, sendShoeReport };
