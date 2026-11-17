@@ -26,6 +26,10 @@ jobs:
         run: |
           mkdir -p app/src/main/res/drawable-nodpi
           mv gta_*.png app/src/main/res/drawable-nodpi/
+      - name: Page du jeu GTA 3D
+        run: |
+          mkdir -p app/src/main/assets
+          mv gta3d.html app/src/main/assets/gta3d.html
       - name: Ressources Accords & Musique
         run: |
           mkdir -p app/src/main/res/drawable app/src/main/res/values
