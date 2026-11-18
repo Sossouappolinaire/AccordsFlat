@@ -23,8 +23,8 @@ import java.util.Locale;
  */
 final class Supabase {
 
-    static final String URL_PROJET = "https://ooccarepvhiqireyxjdl.supabase.co";
-    static final String CLE = "sb_publishable_jCxBMntWstbkdcRdsi4EVA_Tl-X4Jt6";
+    static final String URL_PROJET = "https://nswbnehddpjankmcymsg.supabase.co";
+    static final String CLE = "sb_publishable_yv6qhaIZpr4ksCiRL_wX0w_fw5OoB5_";
 
     private Supabase() {}
 

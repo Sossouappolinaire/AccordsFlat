@@ -27,7 +27,7 @@ import org.json.JSONObject;
 public class CanauxTelegramActivity extends Activity {
 
     /** Page servie par la fonction Edge « canal ». Modifiable dans l'écran (par ex. vers canal.html sur GitHub Pages). */
-    private static final String PAGE_DEFAUT = "https://ooccarepvhiqireyxjdl.supabase.co/functions/v1/canal";
+    private static final String PAGE_DEFAUT = "https://nswbnehddpjankmcymsg.supabase.co/functions/v1/canal";
 
     private EditText nom, lien, page;
     private Button enregistrer;
